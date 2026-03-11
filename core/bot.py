@@ -3,6 +3,8 @@ BotEngine — Ana orkestrasyon sınıfı.
 Tüm modülleri bir araya getirir ve iş mantığını yönetir.
 """
 import asyncio
+import datetime
+import time
 import ta
 from typing import Optional
 from config.settings import BotSettings
@@ -156,19 +158,24 @@ class BotEngine:
             if not symbols:
                 return
 
-            signals = []
+            signals = []          # (FinalSignal, IndicatorValues) pairs
             for symbol in symbols:
                 coin = coin_from_symbol(symbol)
-                signal = await self._evaluate_coin(coin, symbol)
-                if signal and signal.is_actionable:
-                    signals.append(signal)
+                result = await self._evaluate_coin(coin, symbol)
+                if result and result[0].is_actionable:
+                    signals.append(result)
+
+            # En iyi fırsatı state'e kaydet (send_opportunity_scan için)
+            if signals:
+                best = max(signals, key=lambda r: r[0].combined_score)
+                self.state.best_opportunity = best
 
             # En güçlü sinyalleri işle
-            signals.sort(key=lambda s: s.combined_score, reverse=True)
+            signals.sort(key=lambda r: r[0].combined_score, reverse=True)
             open_positions = self.engine.positions if self.settings.paper_trading else self.state.open_positions
             slots = self.settings.max_concurrent_positions - len(open_positions)
 
-            for signal in signals[:slots]:
+            for signal, _iv in signals[:slots]:
                 # Korelasyon grubu limiti kontrolü
                 open_coins = (
                     set(self.engine.positions.keys())
@@ -556,7 +563,105 @@ class BotEngine:
                 reasons=final_signal.reasons[:3],
             )
 
-        return final_signal
+        return final_signal, iv
+
+    # ── Fırsat Tarayıcı ───────────────────────────────────────────────────────
+
+    async def send_opportunity_scan(self) -> None:
+        """Her 15 dakikada en iyi piyasa fırsatını Telegram'a gönderir."""
+        try:
+            opp = self.state.best_opportunity
+            if not opp:
+                return
+            signal, iv = opp
+            if not signal.is_actionable:
+                return
+
+            trend_1h = await asyncio.to_thread(self._get_tf_trend, signal.coin, "1h")
+            trend_4h = await asyncio.to_thread(self._get_tf_trend, signal.coin, "4h")
+            msg = self._format_opportunity(signal, iv, trend_1h, trend_4h)
+            self.notifier.send(msg)
+        except Exception as e:
+            logger.warning("Fırsat tarayıcı hatası", error=str(e))
+
+    def _get_tf_trend(self, coin: str, tf: str) -> str:
+        symbol = f"{coin}/USDT:USDT"
+        try:
+            df = self.market_data.fetch_ohlcv(symbol, tf)
+            if df is None or len(df) < 21:
+                return "belirsiz"
+            ema9  = ta.trend.EMAIndicator(df["close"], window=9).ema_indicator().iloc[-1]
+            ema21 = ta.trend.EMAIndicator(df["close"], window=21).ema_indicator().iloc[-1]
+            return "yukarı ↑" if ema9 > ema21 else "aşağı ↓"
+        except Exception:
+            return "belirsiz"
+
+    def _display_score(self, signal) -> int:
+        """combined_score (0-1) → -10/+10 arası görsel skor."""
+        magnitude = int((signal.combined_score - 0.5) * 20)
+        magnitude = max(1, min(10, magnitude))
+        return -magnitude if signal.direction.value == "short" else magnitude
+
+    def _humanize_reasons(self, signal, iv) -> list[str]:
+        """İndikatör değerlerini sade Türkçe açıklamalara çevirir."""
+        is_short = signal.direction.value == "short"
+        reasons = []
+
+        # RSI
+        if iv.rsi > 70:
+            reasons.append(f"Coin çok alındı, düşüş bekleniyor (RSI: {iv.rsi:.1f})")
+        elif iv.rsi > 55 and is_short:
+            reasons.append(f"RSI alış bölgesinde ({iv.rsi:.2f})")
+        elif iv.rsi < 30:
+            reasons.append(f"Coin çok satıldı, yükseliş bekleniyor (RSI: {iv.rsi:.1f})")
+        elif iv.rsi < 45 and not is_short:
+            reasons.append(f"RSI satış bölgesinden çıkıyor ({iv.rsi:.2f})")
+        else:
+            reasons.append(f"RSI: {iv.rsi:.1f}")
+
+        # MACD
+        if iv.macd_hist < 0:
+            reasons.append("Momentum aşağı döndü")
+        elif iv.macd_hist > 0:
+            reasons.append("Momentum yukarı döndü")
+
+        # EMA trend
+        if iv.ema_short < iv.ema_long:
+            reasons.append("Kısa vadeli trend aşağı")
+        elif iv.ema_short > iv.ema_long:
+            reasons.append("Kısa vadeli trend yukarı")
+
+        # Bollinger
+        if iv.bb_pct > 0.85:
+            reasons.append("Fiyat üst Bollinger bandını test ediyor")
+        elif iv.bb_pct < 0.15:
+            reasons.append("Fiyat alt Bollinger bandını test ediyor")
+
+        # ADX
+        if iv.adx > 40:
+            reasons.append(f"Trend çok güçlü (ADX: {iv.adx:.0f})")
+        elif iv.adx > 25:
+            reasons.append(f"Trend güçleniyor (ADX: {iv.adx:.0f})")
+
+        return reasons[:5]
+
+    def _format_opportunity(self, signal, iv, trend_1h: str, trend_4h: str) -> str:
+        direction = "LONG" if signal.direction.value == "long" else "SHORT"
+        dir_emoji = "🟢" if direction == "LONG" else "🔴"
+        score = self._display_score(signal)
+        score_str = f"+{score}" if score > 0 else str(score)
+        now = datetime.datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")
+        reasons = self._humanize_reasons(signal, iv)
+        trend_desc = "yükseliş" if direction == "LONG" else "düşüş"
+        reasons_text = "\n".join(f"  - {r}" for r in reasons)
+
+        return (
+            f"🔍 <b>EN İYİ FIRSAT: {signal.coin}USDT — {direction}</b>\n"
+            f"{now} | Skor: {score_str}\n\n"
+            f"1s trend: {trend_1h} | 4s trend: {trend_4h}\n"
+            f"{dir_emoji} En güçlü {trend_desc} sinyali bu coinde\n"
+            f"{reasons_text}"
+        )
 
     async def _handle_telegram_command(self, command: str, **kwargs) -> None:
         """Telegram'dan gelen komutları işler."""

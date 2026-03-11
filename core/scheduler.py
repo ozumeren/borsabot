@@ -70,6 +70,14 @@ class BotScheduler:
             misfire_grace_time=60,
         )
 
+        # En iyi fırsat tarayıcı — 15 dakika
+        self.scheduler.add_job(
+            bot.send_opportunity_scan,
+            IntervalTrigger(minutes=15),
+            id="opportunity_scan",
+            max_instances=1,
+        )
+
         # PnL özeti — 15 dakika
         self.scheduler.add_job(
             bot.send_pnl_update,

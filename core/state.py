@@ -26,6 +26,9 @@ class BotState:
     gemini_cache: dict[str, tuple] = field(default_factory=dict)    # coin → (score, reason)
     fear_greed_index: int = 50
 
+    # En iyi sinyal (send_opportunity_scan için)
+    best_opportunity: Any = None   # (FinalSignal, IndicatorValues) tuple veya None
+
     # Çoklu borsa piyasa verisi cache: coin → FundingSnapshot
     funding_cache: dict[str, Any] = field(default_factory=dict)
 
