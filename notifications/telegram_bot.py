@@ -143,7 +143,7 @@ class TelegramNotifier:
                             if t.direction == "short":
                                 chg = -chg
                             notional = t.margin_used * t.leverage
-                            fee = notional * 0.001  # %0.05 giriş + %0.05 çıkış
+                            fee = notional * 0.002  # %0.10 giriş + %0.10 çıkış (taker fee)
                             unreal = chg * notional - fee
                             sign = "+" if unreal >= 0 else ""
                             price_line = (

@@ -66,7 +66,7 @@ def print_open_positions(session) -> float:
             if t.direction == "short":
                 chg = -chg
             notional = t.margin_used * t.leverage
-            fee = notional * 0.001  # %0.05 giriş + %0.05 çıkış
+            fee = notional * 0.002  # %0.10 giriş + %0.10 çıkış (taker fee)
             unreal_pnl = chg * notional - fee
             chg_str = f"  Anlık: {fmt_usdt(current)} ({fmt_pct(chg)})  Net PnL: {fmt_pnl(unreal_pnl)}"
         else:

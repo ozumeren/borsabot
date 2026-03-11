@@ -15,7 +15,7 @@ from utils.helpers import format_usdt, format_pct, pct_change
 
 logger = get_logger("paper_trading")
 
-OKX_FEE_PCT = 0.0005  # %0.05 işlem başına
+OKX_FEE_PCT = 0.001  # %0.10 taker fee (regular kullanıcı, market emir)
 
 
 @dataclass
