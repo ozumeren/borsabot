@@ -2,11 +2,14 @@ from __future__ import annotations
 import asyncio
 import datetime
 import httpx
+import os
 from typing import Optional
 from utils.logger import get_logger
 from utils.helpers import format_usdt, format_pct
 
 logger = get_logger("notifications.telegram")
+
+_STATUS_ID_FILE = "/tmp/borsabot_status_msgid.txt"
 
 
 class TelegramNotifier:
@@ -17,7 +20,23 @@ class TelegramNotifier:
         self.chat_id = chat_id
         self._base_url = f"https://api.telegram.org/bot{bot_token}"
         self._enabled = bool(bot_token and chat_id)
-        self._status_message_id: Optional[int] = None  # son durum mesajının ID'si
+        self._status_message_id: Optional[int] = self._load_status_id()
+
+    def _load_status_id(self) -> Optional[int]:
+        """Disk'ten son durum mesajı ID'sini yükler (restart'ta kaybolmasın)."""
+        try:
+            if os.path.exists(_STATUS_ID_FILE):
+                val = open(_STATUS_ID_FILE).read().strip()
+                return int(val) if val else None
+        except Exception:
+            pass
+        return None
+
+    def _save_status_id(self, message_id: int) -> None:
+        try:
+            open(_STATUS_ID_FILE, "w").write(str(message_id))
+        except Exception:
+            pass
 
     def send(self, text: str) -> Optional[int]:
         """Mesaj gönderir. Başarılıysa message_id döner, hata varsa None."""
@@ -60,7 +79,7 @@ class TelegramNotifier:
                 resp.raise_for_status()
                 return True
         except Exception as e:
-            logger.debug("Telegram edit hatası", error=str(e))
+            logger.warning("Telegram edit hatası", message_id=message_id, error=str(e))
             return False
 
     def send_trade_opened(self, pos, is_paper: bool = False) -> None:
@@ -259,6 +278,8 @@ class TelegramNotifier:
             msg_id = self.send(text)
             if msg_id:
                 self._status_message_id = msg_id
+                self._save_status_id(msg_id)
+                logger.info("Durum mesajı gönderildi", message_id=msg_id)
         except Exception as e:
             logger.warning("Portföy durumu gönderilemedi", error=str(e))
             self.send(f"❌ Portföy durumu alınamadı: {e}")
@@ -268,13 +289,24 @@ class TelegramNotifier:
         try:
             text = self._build_status_text()
             if self._status_message_id:
-                self._edit_message(self._status_message_id, text)
+                success = self._edit_message(self._status_message_id, text)
+                if not success:
+                    # Edit başarısız (mesaj silinmiş olabilir) → yeni mesaj gönder
+                    logger.info("Edit başarısız, yeni durum mesajı gönderiliyor")
+                    msg_id = self.send(text)
+                    if msg_id:
+                        self._status_message_id = msg_id
+                        self._save_status_id(msg_id)
+                else:
+                    logger.debug("Durum mesajı güncellendi", message_id=self._status_message_id)
             else:
                 msg_id = self.send(text)
                 if msg_id:
                     self._status_message_id = msg_id
+                    self._save_status_id(msg_id)
+                    logger.info("İlk durum mesajı gönderildi", message_id=msg_id)
         except Exception as e:
-            logger.debug("Durum güncellemesi başarısız", error=str(e))
+            logger.warning("Durum güncellemesi başarısız", error=str(e))
 
     def set_command_handler(self, handler) -> None:
         """Bot engine'den komut callback'i kaydeder."""

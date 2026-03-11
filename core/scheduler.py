@@ -70,13 +70,16 @@ class BotScheduler:
             misfire_grace_time=60,
         )
 
-        # Canlı durum mesajı güncelleme — 1 dakika
+        # Canlı durum mesajı güncelleme — 1 dakika (30s offset, signal_loop ile çakışmasın)
+        import datetime as _dt
+        _status_start = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=30)
         self.scheduler.add_job(
             bot.send_live_status_update,
-            IntervalTrigger(minutes=1),
+            IntervalTrigger(minutes=1, start_date=_status_start),
             id="live_status_update",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=55,
         )
 
         # En iyi fırsat tarayıcı — 15 dakika
