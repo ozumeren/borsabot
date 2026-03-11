@@ -84,9 +84,25 @@ class TradeLogger:
                     "entry_price": t.entry_price, "stop_loss_price": t.stop_loss_price,
                     "take_profit_price": t.take_profit_price, "quantity": t.quantity,
                     "margin_used": t.margin_used, "leverage": t.leverage,
+                    "is_paper": t.is_paper,
                 }
                 for t in trades
             ]
+
+    def get_recent_win_rate(self, last_n: int = 20) -> Optional[float]:
+        """Son N kapalı trade'in win rate'ini döndürür. Yeterli veri yoksa None."""
+        with get_session() as session:
+            trades = (
+                session.query(Trade)
+                .filter(Trade.status != "OPEN")
+                .order_by(Trade.closed_at.desc())
+                .limit(last_n)
+                .all()
+            )
+            if len(trades) < 5:
+                return None
+            wins = sum(1 for t in trades if t.pnl_usdt is not None and t.pnl_usdt > 0)
+            return wins / len(trades)
 
     def log_daily_stats(self, stats: dict) -> None:
         today = datetime.date.today().isoformat()

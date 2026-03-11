@@ -1,3 +1,4 @@
+from typing import Optional
 from dataclasses import dataclass, field
 from signals.technical_signal import TechnicalSignal, Direction
 from config.constants import (
@@ -16,6 +17,8 @@ class FinalSignal:
     coin: str
     entry_price: float
     reasons: list[str] = field(default_factory=list)
+    atr: float = 0.0       # volatilite bazlı pozisyon boyutu + trailing stop için
+    leverage: int = 5      # dinamik kaldıraç (calculate_leverage tarafından doldurulur)
 
     @property
     def is_actionable(self) -> bool:
@@ -33,8 +36,9 @@ class SignalCombiner:
     Fear & Greed contrarian: Extreme Fear → LONG, Extreme Greed → SHORT
     """
 
-    def __init__(self, min_combined_score: float = 0.55):
+    def __init__(self, min_combined_score: float = 0.55, trade_logger=None):
         self.min_combined_score = min_combined_score
+        self.trade_logger = trade_logger  # dinamik skor için opsiyonel
 
     def combine(
         self,
@@ -44,9 +48,11 @@ class SignalCombiner:
         market_signal: float = 0.0,    # -1.0 → +1.0 (FundingSnapshot.combined_market_signal)
         coin: str = "",
         entry_price: float = 0.0,
+        atr: float = 0.0,
+        leverage: int = 5,             # calculate_leverage'dan gelir
     ) -> FinalSignal:
 
-        _none = FinalSignal(Direction.NONE, 0.0, 0.0, 0.0, 0.0, coin, entry_price)
+        _none = FinalSignal(Direction.NONE, 0.0, 0.0, 0.0, 0.0, coin, entry_price, atr=atr, leverage=leverage)
 
         if technical.direction == Direction.NONE:
             return _none
@@ -65,7 +71,6 @@ class SignalCombiner:
         sentiment = cp_norm * CRYPTOPANIC_WEIGHT + fg_norm * FEAR_GREED_WEIGHT
 
         # ── Piyasa verisi (funding + L/S) ─────────────────────────────────────
-        # market_signal zaten contrarian (-1..+1), yöne göre normalize et
         market_norm = norm(market_signal)
 
         # ── Birleşik skor ─────────────────────────────────────────────────────
@@ -75,21 +80,42 @@ class SignalCombiner:
             market_norm      * MARKET_DATA_WEIGHT
         )
 
+        # ── Confluence bonusu ─────────────────────────────────────────────────
+        # ≥4 indikatör aynı yönde → +0.05
+        if technical.indicator_count >= 4:
+            combined += 0.05
+        # BB + RSI aynı yönde → +0.03
+        if technical.bb_aligned and technical.rsi_aligned:
+            combined += 0.03
+
         # Güçlü CryptoPanic çelişkisi → engelle
         if (is_long and cryptopanic_score < -0.4) or \
            (not is_long and cryptopanic_score > 0.4):
             return FinalSignal(
                 Direction.NONE, combined, technical.score,
                 sentiment, market_norm, coin, entry_price,
-                ["Sentiment teknik sinyalle çelişiyor"]
+                ["Sentiment teknik sinyalle çelişiyor"], atr=atr, leverage=leverage,
             )
 
-        if combined >= self.min_combined_score:
+        # ── Dinamik minimum skor ──────────────────────────────────────────────
+        min_score = self.min_combined_score
+        if self.trade_logger is not None:
+            win_rate = self.trade_logger.get_recent_win_rate(last_n=20)
+            if win_rate is not None:
+                if win_rate < 0.40:
+                    min_score = 0.65   # düşük win rate → daha seçici
+                elif win_rate > 0.65:
+                    min_score = 0.52   # yüksek win rate → biraz gevşet
+
+        if combined >= min_score:
             reasons = technical.reasons + [
                 f"Sentiment: {sentiment:.2f}",
                 f"Fear&Greed: {fear_greed_index}",
                 f"Piyasa (funding/LS): {market_norm:.2f}",
+                f"Kaldıraç: {leverage}x",
             ]
+            if technical.indicator_count >= 4:
+                reasons.append(f"Confluence bonusu: {technical.indicator_count} indikatör")
             return FinalSignal(
                 direction=technical.direction,
                 combined_score=combined,
@@ -99,7 +125,9 @@ class SignalCombiner:
                 coin=coin,
                 entry_price=entry_price,
                 reasons=reasons,
+                atr=atr,
+                leverage=leverage,
             )
 
         return FinalSignal(Direction.NONE, combined, technical.score,
-                           sentiment, market_norm, coin, entry_price)
+                           sentiment, market_norm, coin, entry_price, atr=atr, leverage=leverage)

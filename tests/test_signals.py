@@ -18,7 +18,7 @@ def make_iv(**kwargs) -> IndicatorValues:
         rsi=50.0, macd_line=0.0, macd_signal=0.0, macd_hist=0.0,
         ema_short=100.0, ema_long=100.0, sma_long=100.0,
         bb_upper=105.0, bb_mid=100.0, bb_lower=95.0, bb_pct=0.5,
-        atr=1.5, close=100.0, volume=1000.0, volume_avg20=700.0,
+        atr=1.5, adx=25.0, close=100.0, volume=1000.0, volume_avg20=700.0,
     )
     defaults.update(kwargs)
     return IndicatorValues(**defaults)

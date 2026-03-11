@@ -78,6 +78,14 @@ class BotScheduler:
             max_instances=1,
         )
 
+        # Açık pozisyon detay raporu — 30 dakika
+        self.scheduler.add_job(
+            bot.send_positions_report,
+            IntervalTrigger(minutes=30),
+            id="positions_report",
+            max_instances=1,
+        )
+
         # Günlük sıfırlama — gece 00:00 UTC
         self.scheduler.add_job(
             bot.daily_reset,

@@ -15,6 +15,9 @@ BB_PERIOD = 20
 BB_STD = 2.0
 
 ATR_PERIOD = 14
+ADX_PERIOD = 14
+ADX_TREND_THRESHOLD = 20   # ADX < 20 → yatay piyasa, sinyal geçersiz
+ADX_STRONG_TREND = 40      # ADX > 40 → güçlü trend, bonus
 MIN_CANDLES = 50  # indikatörler için minimum mum sayısı
 
 # ── OKX Rate Limit ───────────────────────────────────────────────────────────

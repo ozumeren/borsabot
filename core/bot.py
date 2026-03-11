@@ -3,6 +3,7 @@ BotEngine — Ana orkestrasyon sınıfı.
 Tüm modülleri bir araya getirir ve iş mantığını yönetir.
 """
 import asyncio
+import ta
 from typing import Optional
 from config.settings import BotSettings
 from exchange.client import OKXClient
@@ -17,6 +18,8 @@ from signals.combiner import SignalCombiner
 from risk.position_sizer import PositionSizer
 from risk.stop_loss import StopLossCalculator
 from risk.circuit_breaker import CircuitBreaker
+from risk.correlation import CorrelationGuard
+from risk.leverage import calculate_leverage
 from notifications.telegram_bot import TelegramNotifier
 from database.trade_logger import TradeLogger
 from database.db import init_db
@@ -43,7 +46,10 @@ class BotEngine:
         # Analiz
         self.tech_analyzer = TechnicalAnalyzer()
         self.tech_sig_gen  = TechnicalSignalGenerator(min_score=settings.min_technical_score)
-        self.sig_combiner  = SignalCombiner(min_combined_score=settings.min_combined_score)
+        self.sig_combiner  = SignalCombiner(
+            min_combined_score=settings.min_combined_score,
+            trade_logger=self.trade_logger,
+        )
 
         # Sentiment
         self.cryptopanic = CryptoPanicFetcher(settings.cryptopanic_api_key)
@@ -67,6 +73,9 @@ class BotEngine:
             daily_loss_limit_pct=settings.daily_loss_limit_pct,
             max_positions=settings.max_concurrent_positions,
         )
+
+        # Korelasyon koruyucu
+        self.correlation_guard = CorrelationGuard()
 
         # Bildirim
         self.notifier = TelegramNotifier(
@@ -128,6 +137,9 @@ class BotEngine:
                 self.state.add_position(coin, pos)
             if restored:
                 logger.info("Paper pozisyonlar geri yüklendi", count=restored)
+        else:
+            # Canlı modda OKX pozisyonlarını DB ile karşılaştır
+            await self._reconcile_live_positions()
 
         # Telegram komut handler'ını kaydet ve dinleyiciyi başlat
         self.notifier.set_command_handler(self._handle_telegram_command)
@@ -155,6 +167,19 @@ class BotEngine:
             slots = self.settings.max_concurrent_positions - len(open_positions)
 
             for signal in signals[:slots]:
+                # Korelasyon grubu limiti kontrolü
+                open_coins = (
+                    set(self.engine.positions.keys())
+                    if self.settings.paper_trading
+                    else set(self.state.open_positions.keys())
+                )
+                if not self.correlation_guard.can_open(signal.coin, open_coins):
+                    logger.info(
+                        "Korelasyon limiti — sinyal atlandı",
+                        coin=signal.coin,
+                    )
+                    continue
+
                 if self.settings.paper_trading:
                     portfolio_val = self.engine.portfolio_value
                 else:
@@ -195,6 +220,8 @@ class BotEngine:
                     self.state.remove_position(coin)
             else:
                 await self._sync_live_positions()
+                # Monitor job içinde likidayon + fill kontrolü de çalışır
+                self.engine.monitor_open_positions()
 
         except Exception as e:
             logger.error("Pozisyon izleme hatası", error=str(e))
@@ -293,6 +320,105 @@ class BotEngine:
         except Exception as e:
             logger.error("PnL güncelleme hatası", error=str(e))
 
+    async def send_positions_report(self) -> None:
+        """
+        30 dakikada bir açık pozisyonların detaylı durumunu Telegram'a gönderir.
+        Her pozisyon için: yön, kaldıraç, giriş/anlık fiyat, gerçekleşmemiş PnL,
+        SL/TP mesafesi, trailing stop durumu.
+        """
+        try:
+            import datetime as dt
+
+            if self.settings.paper_trading:
+                positions = self.engine.positions
+            else:
+                positions = {}  # canlı: state'deki kayıtları kullan
+
+            open_count = len(positions) if self.settings.paper_trading else len(self.state.open_positions)
+
+            if open_count == 0:
+                # Açık pozisyon yoksa sadece özet gönder
+                self.notifier.send(
+                    f"📍 <b>Pozisyon Durumu</b>\n"
+                    f"Açık pozisyon yok.\n"
+                    f"Portföy: <b>${self.state.portfolio_value:,.2f}</b>"
+                )
+                return
+
+            now_str = dt.datetime.utcnow().strftime("%H:%M UTC")
+            lines = [f"📍 <b>Pozisyon Durumu</b>  <i>{now_str}</i>\n"]
+
+            total_unrealized = 0.0
+
+            if self.settings.paper_trading:
+                for coin, pos in positions.items():
+                    # Anlık fiyatı çek
+                    symbol = f"{coin}/USDT:USDT"
+                    current = self.market_data.get_current_price(symbol) or pos.current_price
+                    pos.current_price = current
+
+                    pnl = pos.unrealized_pnl
+                    total_unrealized += pnl
+                    pnl_pct = pos.unrealized_pnl_pct
+
+                    dir_emoji = "🟢" if pos.direction == "long" else "🔴"
+                    pnl_emoji = "📈" if pnl >= 0 else "📉"
+                    sign = "+" if pnl >= 0 else ""
+
+                    # SL / TP mesafesi
+                    if pos.direction == "long":
+                        sl_dist = (current - pos.stop_loss_price) / current * 100
+                        tp_dist = (pos.take_profit_price - current) / current * 100
+                    else:
+                        sl_dist = (pos.stop_loss_price - current) / current * 100
+                        tp_dist = (current - pos.take_profit_price) / current * 100
+
+                    trail_tag = " 🔄trail" if pos.trailing_active else ""
+
+                    lines.append(
+                        f"{dir_emoji} <b>{coin}</b> {pos.direction.upper()} {pos.leverage}x{trail_tag}\n"
+                        f"  Giriş: ${pos.entry_price:,.4f}  →  Anlık: ${current:,.4f}\n"
+                        f"  {pnl_emoji} PnL: <b>{sign}${pnl:.2f}</b> ({sign}{pnl_pct*100:.1f}%)\n"
+                        f"  SL -{sl_dist:.1f}%  |  TP +{tp_dist:.1f}%"
+                    )
+            else:
+                # Canlı mod: sadece kayıtlardaki bilgiler
+                for coin, record in self.state.open_positions.items():
+                    symbol = f"{coin}/USDT:USDT"
+                    current = self.market_data.get_current_price(symbol) or record.entry_price
+                    if record.direction == "long":
+                        pnl = (current - record.entry_price) * record.quantity
+                        sl_dist = (current - record.stop_loss_price) / current * 100
+                        tp_dist = ((record.take_profit_price or current) - current) / current * 100
+                    else:
+                        pnl = (record.entry_price - current) * record.quantity
+                        sl_dist = (record.stop_loss_price - current) / current * 100
+                        tp_dist = (current - (record.take_profit_price or current)) / current * 100
+
+                    total_unrealized += pnl
+                    pnl_pct = pnl / record.margin_used if record.margin_used > 0 else 0.0
+                    dir_emoji = "🟢" if record.direction == "long" else "🔴"
+                    pnl_emoji = "📈" if pnl >= 0 else "📉"
+                    sign = "+" if pnl >= 0 else ""
+
+                    lines.append(
+                        f"{dir_emoji} <b>{coin}</b> {record.direction.upper()} {record.leverage}x\n"
+                        f"  Giriş: ${record.entry_price:,.4f}  →  Anlık: ${current:,.4f}\n"
+                        f"  {pnl_emoji} PnL: <b>{sign}${pnl:.2f}</b> ({sign}{pnl_pct*100:.1f}%)\n"
+                        f"  SL -{sl_dist:.1f}%  |  TP +{tp_dist:.1f}%"
+                    )
+
+            sign_u = "+" if total_unrealized >= 0 else ""
+            lines.append(
+                f"\n💰 Toplam Gerçekleşmemiş: <b>{sign_u}${total_unrealized:.2f}</b>\n"
+                f"Portföy: <b>${self.state.portfolio_value:,.2f}</b>"
+            )
+
+            self.notifier.send("\n".join(lines))
+
+        except Exception as e:
+            logger.error("Pozisyon raporu hatası", error=str(e))
+
     async def daily_reset(self) -> None:
         """Gece yarısı UTC sıfırlama."""
         stats = {
@@ -319,7 +445,7 @@ class BotEngine:
     # ── İç metodlar ───────────────────────────────────────────────────────────
 
     async def _evaluate_coin(self, coin: str, symbol: str):
-        """Tek bir coin için tam sinyal değerlendirmesi."""
+        """Tek bir coin için tam sinyal değerlendirmesi (15m + MTF 1h filtresi)."""
         df = self.market_data.fetch_ohlcv(symbol, self.settings.timeframe)
         if df is None:
             return None
@@ -333,7 +459,22 @@ class BotEngine:
         if tech_signal.direction == Direction.NONE:
             return None
 
-        # Gerçek piyasa anlık fiyatı (sandbox değil) — monitor ile tutarlı
+        # ── MTF Filtresi: 1h EMA9/EMA21 onayı ───────────────────────────────
+        try:
+            df_1h = self.market_data.fetch_ohlcv(symbol, "1h")
+            if df_1h is not None and len(df_1h) >= 21:
+                ema9_1h  = ta.trend.EMAIndicator(df_1h["close"], window=9).ema_indicator().iloc[-1]
+                ema21_1h = ta.trend.EMAIndicator(df_1h["close"], window=21).ema_indicator().iloc[-1]
+                if tech_signal.direction == Direction.LONG and ema9_1h < ema21_1h:
+                    logger.debug("MTF 1h filtre: LONG sinyal iptal (1h bear)", coin=coin)
+                    return None
+                if tech_signal.direction == Direction.SHORT and ema9_1h > ema21_1h:
+                    logger.debug("MTF 1h filtre: SHORT sinyal iptal (1h bull)", coin=coin)
+                    return None
+        except Exception as e:
+            logger.debug("MTF fetch hatası, atlanıyor", coin=coin, error=str(e))
+
+        # Gerçek piyasa anlık fiyatı
         real_price = self.market_data.get_current_price(symbol)
         entry_price = real_price if real_price else iv.close
 
@@ -346,6 +487,19 @@ class BotEngine:
         funding_snap = self.state.funding_cache.get(coin)
         market_signal = funding_snap.combined_market_signal if funding_snap else 0.0
 
+        # ── Dinamik kaldıraç hesapla ─────────────────────────────────────────
+        # combine() öncesinde çağrılır; combine() sonucuna göre tekrar hesap gerekmez
+        # (combine() çağrısından önce tahmini skor bilinmiyor — basit yaklaşım olarak
+        #  önce tahmini combine, sonra leverage hesapla yerine: teknik skoru kullan)
+        dyn_leverage = calculate_leverage(
+            combined_score=tech_signal.score,
+            adx=iv.adx,
+            atr=iv.atr,
+            price=entry_price,
+            base_leverage=self.settings.leverage,
+            max_leverage=self.settings.max_leverage,
+        )
+
         final_signal = self.sig_combiner.combine(
             technical=tech_signal,
             cryptopanic_score=cp_score,
@@ -353,7 +507,20 @@ class BotEngine:
             market_signal=market_signal,
             coin=coin,
             entry_price=entry_price,
+            atr=iv.atr,
+            leverage=dyn_leverage,
         )
+
+        # Combine sonrası asıl skora göre kaldıracı güncelle
+        if final_signal.is_actionable:
+            final_signal.leverage = calculate_leverage(
+                combined_score=final_signal.combined_score,
+                adx=iv.adx,
+                atr=iv.atr,
+                price=entry_price,
+                base_leverage=self.settings.leverage,
+                max_leverage=self.settings.max_leverage,
+            )
 
         if final_signal.is_actionable:
             logger.info(
@@ -361,6 +528,8 @@ class BotEngine:
                 coin=coin,
                 direction=final_signal.direction.value,
                 score=f"{final_signal.combined_score:.2f}",
+                leverage=f"{final_signal.leverage}x",
+                adx=f"{iv.adx:.1f}",
                 funding=f"{funding_snap.rate_pct_str() if funding_snap else 'N/A'}",
                 reasons=final_signal.reasons[:3],
             )
@@ -371,15 +540,20 @@ class BotEngine:
         """Telegram'dan gelen komutları işler."""
         if command == "kapat":
             coin = kwargs.get("coin", "").upper()
-            pos = self.engine.positions.get(coin) if self.settings.paper_trading else None
-            if pos:
-                price = self.market_data.get_current_price(f"{coin}/USDT:USDT") or pos.entry_price
-                self.engine._close_position(coin, pos, price, "CLOSED_MANUAL")
-                del self.engine.positions[coin]
-                self.state.remove_position(coin)
-                self.notifier.send(f"✅ <b>{coin}</b> pozisyonu manuel olarak kapatıldı.")
+            if self.settings.paper_trading:
+                pos = self.engine.positions.get(coin)
+                if pos:
+                    price = self.market_data.get_current_price(f"{coin}/USDT:USDT") or pos.entry_price
+                    self.engine._close_position(coin, pos, price, "CLOSED_MANUAL")
+                    self.state.remove_position(coin)
+                    self.notifier.send(f"✅ <b>{coin}</b> pozisyonu manuel olarak kapatıldı.")
+                else:
+                    self.notifier.send(f"⚠️ <b>{coin}</b> için açık pozisyon bulunamadı.")
             else:
-                self.notifier.send(f"⚠️ <b>{coin}</b> için açık pozisyon bulunamadı.")
+                if coin in self.state.open_positions:
+                    self.engine.close_position(coin, "CLOSED_MANUAL")
+                else:
+                    self.notifier.send(f"⚠️ <b>{coin}</b> için açık pozisyon bulunamadı.")
 
         elif command == "hepsiniKapat":
             if self.settings.paper_trading:
@@ -395,7 +569,12 @@ class BotEngine:
                 self.engine.positions.clear()
                 self.notifier.send(f"✅ {len(coins)} pozisyon kapatıldı: {', '.join(coins)}")
             else:
-                self.notifier.send("⚠️ Canlı modda manuel kapama henüz desteklenmiyor.")
+                coins = list(self.state.open_positions.keys())
+                if not coins:
+                    self.notifier.send("ℹ️ Kapatılacak açık pozisyon yok.")
+                    return
+                ok = [c for c in coins if self.engine.close_position(c, "CLOSED_MANUAL")]
+                self.notifier.send(f"✅ {len(ok)}/{len(coins)} pozisyon kapatıldı: {', '.join(ok)}")
 
         elif command == "durdur":
             self.circuit_breaker.is_halted = True
@@ -430,9 +609,99 @@ class BotEngine:
                 for p in live_positions
                 if p.get("contracts", 0) > 0
             }
+
+            # DB'de OPEN ama OKX'te yok → kapanmış say
             for coin in list(self.state.open_positions.keys()):
                 if coin not in live_coins:
+                    record = self.state.open_positions.get(coin)
+                    symbol = f"{coin}/USDT:USDT"
+                    mark_price = self.market_data.get_current_price(symbol) or (
+                        record.entry_price if record else 0.0
+                    )
+                    if record and record.db_id and mark_price > 0:
+                        pnl = (
+                            (mark_price - record.entry_price) * record.quantity
+                            if record.direction == "long"
+                            else (record.entry_price - mark_price) * record.quantity
+                        )
+                        pnl_pct = pnl / record.margin_used if record.margin_used > 0 else 0.0
+                        self.trade_logger.log_close(
+                            record.db_id, mark_price, "CLOSED_MANUAL", pnl, pnl_pct
+                        )
+                        self.notifier.send_alert(
+                            f"ℹ️ {coin} OKX'te kapanmış — DB güncellendi (PnL: {pnl:+.2f} USDT)"
+                        )
                     self.state.remove_position(coin)
                     logger.info("Pozisyon kapandı (OKX senkronizasyon)", coin=coin)
+
+            # OKX'te açık ama bot'ta kayıt yok → uyarı ver
+            bot_coins = set(self.state.open_positions.keys())
+            for live_coin in live_coins:
+                if live_coin not in bot_coins:
+                    logger.warning("OKX'te kayıtsız pozisyon var!", coin=live_coin)
+                    self.notifier.send_alert(
+                        f"⚠️ OKX'te {live_coin} pozisyonu var ama bot kayıtlarında yok!"
+                    )
+
         except Exception as e:
             logger.warning("OKX pozisyon senkronizasyon hatası", error=str(e))
+
+    async def _reconcile_live_positions(self) -> None:
+        """
+        Bot restart'ında OKX pozisyonlarını DB ile tam karşılaştır.
+        DB'deki OPEN pozisyonları state'e yükler; OKX'te olmayan kapalı sayar.
+        """
+        logger.info("Canlı pozisyon mutabakatı başlatılıyor...")
+        try:
+            # DB'deki açık işlemleri yükle
+            open_trades = self.trade_logger.get_open_trades()
+            live_positions = self.client.fetch_positions()
+            live_coins = {
+                p["symbol"].split("/")[0]
+                for p in live_positions
+                if p.get("contracts", 0) > 0
+            }
+
+            reconciled = 0
+            for t in open_trades:
+                coin = t["coin"]
+                if t.get("is_paper"):
+                    continue  # paper trade'leri atla
+
+                if coin in live_coins:
+                    # OKX'te gerçekten açık → state'e ekle
+                    from database.trade_logger import TradeRecord
+                    record = TradeRecord(
+                        coin=coin,
+                        direction=t["direction"],
+                        entry_price=t["entry_price"],
+                        stop_loss_price=t["stop_loss_price"],
+                        take_profit_price=t["take_profit_price"],
+                        quantity=t["quantity"],
+                        margin_used=t["margin_used"],
+                        leverage=t["leverage"],
+                        is_paper=False,
+                    )
+                    record.db_id = t["id"]
+                    self.state.add_position(coin, record)
+                    reconciled += 1
+                else:
+                    # OKX'te yok → kapanmış say
+                    symbol = f"{coin}/USDT:USDT"
+                    mark_price = self.market_data.get_current_price(symbol) or t["entry_price"]
+                    direction = t["direction"]
+                    qty = t["quantity"]
+                    entry = t["entry_price"]
+                    margin = t["margin_used"]
+                    pnl = (mark_price - entry) * qty if direction == "long" else (entry - mark_price) * qty
+                    pnl_pct = pnl / margin if margin > 0 else 0.0
+                    self.trade_logger.log_close(t["id"], mark_price, "CLOSED_MANUAL", pnl, pnl_pct)
+                    logger.warning("DB'deki pozisyon OKX'te yok — kapandı sayıldı", coin=coin)
+
+            if reconciled:
+                logger.info("Mutabakat tamamlandı", live_positions=reconciled)
+                self.notifier.send_alert(
+                    f"🔄 Bot yeniden başlatıldı. {reconciled} açık pozisyon senkronize edildi."
+                )
+        except Exception as e:
+            logger.error("Pozisyon mutabakatı hatası", error=str(e))

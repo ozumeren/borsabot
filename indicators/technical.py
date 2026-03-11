@@ -5,7 +5,7 @@ from config.constants import (
     RSI_PERIOD, RSI_OVERBOUGHT, RSI_OVERSOLD,
     MACD_FAST, MACD_SLOW, MACD_SIGNAL_PERIOD,
     EMA_SHORT, EMA_LONG, SMA_LONG,
-    BB_PERIOD, BB_STD, ATR_PERIOD,
+    BB_PERIOD, BB_STD, ATR_PERIOD, ADX_PERIOD,
 )
 
 
@@ -23,6 +23,7 @@ class IndicatorValues:
     bb_lower: float
     bb_pct: float       # 0.0 = alt band, 1.0 = üst band
     atr: float
+    adx: float
     close: float
     volume: float
     volume_avg20: float
@@ -74,6 +75,10 @@ class TechnicalAnalyzer:
         # ATR
         atr = ta.volatility.AverageTrueRange(high, low, close, window=ATR_PERIOD).average_true_range().iloc[-1]
 
+        # ADX
+        adx_indicator = ta.trend.ADXIndicator(high, low, close, window=ADX_PERIOD)
+        adx = adx_indicator.adx().iloc[-1]
+
         # Hacim
         volume = float(vol.iloc[-1])
         volume_avg20 = float(vol.tail(20).mean())
@@ -91,6 +96,7 @@ class TechnicalAnalyzer:
             bb_lower=float(bb_lower),
             bb_pct=float(bb_pct),
             atr=float(atr),
+            adx=float(adx) if not pd.isna(adx) else 0.0,
             close=float(price),
             volume=volume,
             volume_avg20=volume_avg20,

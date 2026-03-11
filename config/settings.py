@@ -18,7 +18,8 @@ class BotSettings(BaseSettings):
     okx_sandbox: bool = Field(default=True, alias="OKX_SANDBOX")
 
     # ── Trading ───────────────────────────────────────────────────────────────
-    leverage: int = Field(default=5, alias="LEVERAGE")
+    leverage: int = Field(default=5, alias="LEVERAGE")           # taban kaldıraç
+    max_leverage: int = Field(default=10, alias="MAX_LEVERAGE")  # dinamik üst sınır
     margin_mode: Literal["isolated", "cross"] = Field(default="isolated", alias="MARGIN_MODE")
     max_concurrent_positions: int = Field(default=5, alias="MAX_CONCURRENT_POSITIONS")
     timeframe: str = Field(default="15m", alias="TIMEFRAME")

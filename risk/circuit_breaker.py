@@ -48,6 +48,47 @@ class CircuitBreaker:
         """Tek pozisyon için acil kapama kontrolü."""
         return position_pnl_pct <= -self.single_position_emergency_pct
 
+    def check_liquidation_risk(self, positions: list) -> list:
+        """
+        OKX pozisyon listesindeki (ccxt fetch_positions çıktısı) margin ratio'yu kontrol eder.
+        mgnRatio < 1.15 (115%) → acil kapat
+        mgnRatio < 1.50 (150%) → uyarı logu
+
+        Döndürür: acil kapatılması gereken coin sembollerinin listesi
+        """
+        to_close = []
+        for pos in positions:
+            if not pos.get("contracts", 0):
+                continue
+
+            info = pos.get("info", {})
+            mgn_ratio_str = info.get("mgnRatio", "")
+            if not mgn_ratio_str:
+                continue
+
+            try:
+                mgn_ratio = float(mgn_ratio_str)
+            except (ValueError, TypeError):
+                continue
+
+            coin = pos.get("symbol", "").split("/")[0]
+
+            if mgn_ratio < 1.15:
+                to_close.append(coin)
+                logger.critical(
+                    "LİKİDASYON RİSKİ — acil kapama!",
+                    coin=coin,
+                    mgn_ratio=f"{mgn_ratio:.2%}",
+                )
+            elif mgn_ratio < 1.50:
+                logger.warning(
+                    "Margin ratio düşük — dikkat!",
+                    coin=coin,
+                    mgn_ratio=f"{mgn_ratio:.2%}",
+                )
+
+        return to_close
+
     def update_pnl(self, pnl_delta: float) -> None:
         self._daily_pnl += pnl_delta
 

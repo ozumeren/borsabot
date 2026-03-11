@@ -30,6 +30,10 @@ class PaperPosition:
     leverage: int
     db_id: Optional[int] = None
     current_price: float = 0.0
+    highest_price: float = 0.0   # trailing stop için
+    lowest_price: float = 0.0    # trailing stop için
+    atr: float = 0.0
+    trailing_active: bool = False
 
     @property
     def unrealized_pnl(self) -> float:
@@ -109,6 +113,8 @@ class PaperEngine:
             entry_price=signal.entry_price,
             stop_loss_price=sl_price,
             signal_score=signal.combined_score,
+            atr=signal.atr,
+            leverage=signal.leverage,
         )
 
         record = TradeRecord(
@@ -136,9 +142,12 @@ class PaperEngine:
             take_profit_price=tp_price,
             quantity=sizing.quantity,
             margin=sizing.margin_required,
-            leverage=self.position_sizer.leverage,
+            leverage=signal.leverage,
             db_id=db_id,
             current_price=signal.entry_price,
+            highest_price=signal.entry_price,
+            lowest_price=signal.entry_price,
+            atr=signal.atr,
         )
         self.positions[signal.coin] = pos
 
@@ -161,6 +170,7 @@ class PaperEngine:
     def update_prices(self, price_map: dict[str, float]) -> list[str]:
         """
         Pozisyonları günceller. SL/TP vurarsa kapatır.
+        Trailing stop varsa SL'yi dinamik olarak günceller.
         Dönen: kapanan coin listesi
         """
         closed = []
@@ -170,17 +180,50 @@ class PaperEngine:
                 continue
             pos.current_price = price
 
-            # SL kontrolü
+            # ── Trailing Stop Güncelleme ──────────────────────────────────────
+            trail_dist = pos.atr * 1.5 if pos.atr > 0 else pos.entry_price * 0.02
+            activation_offset = pos.atr * 1.0 if pos.atr > 0 else pos.entry_price * 0.02
+
+            if pos.direction == "long":
+                if price > pos.highest_price:
+                    pos.highest_price = price
+                # Aktifleşme: fiyat giriş + ATR×1 üzerine çıktı
+                if not pos.trailing_active and price >= pos.entry_price + activation_offset:
+                    pos.trailing_active = True
+                    logger.debug("[PAPER] Trailing stop aktifleşti", coin=coin, price=price)
+                # SL güncelle
+                if pos.trailing_active:
+                    new_sl = pos.highest_price - trail_dist
+                    if new_sl > pos.stop_loss_price:
+                        logger.debug(
+                            "[PAPER] Trailing SL güncellendi", coin=coin,
+                            old_sl=pos.stop_loss_price, new_sl=new_sl,
+                        )
+                        pos.stop_loss_price = new_sl
+            else:  # short
+                if price < pos.lowest_price or pos.lowest_price == 0:
+                    pos.lowest_price = price
+                if not pos.trailing_active and price <= pos.entry_price - activation_offset:
+                    pos.trailing_active = True
+                    logger.debug("[PAPER] Trailing stop aktifleşti", coin=coin, price=price)
+                if pos.trailing_active:
+                    new_sl = pos.lowest_price + trail_dist
+                    if new_sl < pos.stop_loss_price:
+                        logger.debug(
+                            "[PAPER] Trailing SL güncellendi", coin=coin,
+                            old_sl=pos.stop_loss_price, new_sl=new_sl,
+                        )
+                        pos.stop_loss_price = new_sl
+
+            # ── SL / TP / Acil Kapama Kontrolü ───────────────────────────────
             sl_hit = (
                 (pos.direction == "long"  and price <= pos.stop_loss_price) or
                 (pos.direction == "short" and price >= pos.stop_loss_price)
             )
-            # TP kontrolü
             tp_hit = (
                 (pos.direction == "long"  and price >= pos.take_profit_price) or
                 (pos.direction == "short" and price <= pos.take_profit_price)
             )
-            # Acil kapama
             emergency = self.circuit_breaker.should_emergency_close(pos.unrealized_pnl_pct)
 
             if sl_hit or tp_hit or emergency:
