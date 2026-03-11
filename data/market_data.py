@@ -1,4 +1,5 @@
 import pandas as pd
+import httpx
 from typing import Optional
 from exchange.client import OKXClient
 from data.data_cache import TTLCache
@@ -99,12 +100,18 @@ class MarketDataFetcher:
         return df
 
     def get_current_price(self, symbol: str) -> Optional[float]:
-        """Anlık fiyatı döndürür (cache'siz)."""
+        """Gerçek piyasa anlık fiyatını döndürür (OKX public API, sandbox değil)."""
+        # symbol formatı: "ETH/USDT:USDT" → instId: "ETH-USDT-SWAP"
         try:
-            tickers = self.client.fetch_tickers()
-            ticker = tickers.get(symbol)
-            if ticker:
-                return float(ticker.get("last") or ticker.get("close") or 0)
+            coin = symbol.split("/")[0]
+            inst_id = f"{coin}-USDT-SWAP"
+            r = httpx.get(
+                f"https://www.okx.com/api/v5/market/ticker?instId={inst_id}",
+                timeout=5.0,
+            )
+            data = r.json().get("data", [])
+            if data:
+                return float(data[0]["last"])
         except Exception as e:
             logger.warning("Fiyat alınamadı", symbol=symbol, error=str(e))
         return None
