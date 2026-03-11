@@ -140,15 +140,17 @@ class BotEngine:
 
             # En güçlü sinyalleri işle
             signals.sort(key=lambda s: s.combined_score, reverse=True)
-            open_count = len(self.state.open_positions)
-            slots = self.settings.max_concurrent_positions - open_count
+            open_positions = self.engine.positions if self.settings.paper_trading else self.state.open_positions
+            slots = self.settings.max_concurrent_positions - len(open_positions)
 
             for signal in signals[:slots]:
                 portfolio_val = self.client.get_portfolio_value()
                 self.state.portfolio_value = portfolio_val
 
                 if self.settings.paper_trading:
-                    self.engine.open_position(signal, portfolio_val)
+                    pos = self.engine.open_position(signal, portfolio_val)
+                    if pos:
+                        self.state.add_position(signal.coin, pos)
                 else:
                     self.engine.execute(signal, portfolio_val)
 
@@ -158,11 +160,16 @@ class BotEngine:
     async def monitor_positions(self) -> None:
         """Açık pozisyonları izle — 10 saniyede bir çalışır."""
         try:
-            if not self.state.open_positions:
+            if self.settings.paper_trading:
+                active_coins = list(self.engine.positions.keys())
+            else:
+                active_coins = list(self.state.open_positions.keys())
+
+            if not active_coins:
                 return
 
             price_map = {}
-            for coin in list(self.state.open_positions.keys()):
+            for coin in active_coins:
                 symbol = coin + "/USDT:USDT"
                 price = self.market_data.get_current_price(symbol)
                 if price:
