@@ -70,6 +70,14 @@ class BotScheduler:
             misfire_grace_time=60,
         )
 
+        # PnL özeti — 15 dakika
+        self.scheduler.add_job(
+            bot.send_pnl_update,
+            IntervalTrigger(minutes=15),
+            id="pnl_update",
+            max_instances=1,
+        )
+
         # Günlük sıfırlama — gece 00:00 UTC
         self.scheduler.add_job(
             bot.daily_reset,

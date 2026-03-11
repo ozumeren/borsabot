@@ -237,6 +237,56 @@ class BotEngine:
         except Exception as e:
             logger.error("Funding fetch hatası", error=str(e))
 
+    async def send_pnl_update(self) -> None:
+        """15 dakikada bir toplam PnL özetini Telegram'a gönderir."""
+        try:
+            from database.db import get_session
+            from database.models import Trade
+            from sqlalchemy import func
+
+            with get_session() as session:
+                # Bugünkü kapalı işlemler
+                import datetime
+                today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                today_pnl = session.query(func.sum(Trade.pnl_usdt)).filter(
+                    Trade.status != "OPEN",
+                    Trade.closed_at >= today,
+                ).scalar() or 0.0
+                today_trades = session.query(Trade).filter(
+                    Trade.status != "OPEN",
+                    Trade.closed_at >= today,
+                ).count()
+                today_wins = session.query(Trade).filter(
+                    Trade.status != "OPEN",
+                    Trade.closed_at >= today,
+                    Trade.pnl_usdt > 0,
+                ).count()
+
+                # Açık pozisyonlar gerçekleşmemiş PnL
+                open_positions = self.engine.positions if self.settings.paper_trading else {}
+                unrealized = sum(p.unrealized_pnl for p in open_positions.values())
+
+                # Toplam (tüm zamanlar)
+                total_pnl = session.query(func.sum(Trade.pnl_usdt)).filter(
+                    Trade.status != "OPEN"
+                ).scalar() or 0.0
+
+            open_count = len(open_positions)
+            sign_today = "+" if today_pnl >= 0 else ""
+            sign_unreal = "+" if unrealized >= 0 else ""
+            sign_total = "+" if total_pnl >= 0 else ""
+            wr = f"{today_wins}/{today_trades}" if today_trades else "—"
+
+            text = (
+                f"📊 <b>PnL Güncelleme</b>\n"
+                f"Bugün: <b>{sign_today}${today_pnl:,.2f}</b>  ({wr} kazanç)\n"
+                f"Gerçekleşmemiş: <b>{sign_unreal}${unrealized:,.2f}</b>  ({open_count} açık pozisyon)\n"
+                f"Toplam: <b>{sign_total}${total_pnl:,.2f}</b>"
+            )
+            self.notifier.send(text)
+        except Exception as e:
+            logger.error("PnL güncelleme hatası", error=str(e))
+
     async def daily_reset(self) -> None:
         """Gece yarısı UTC sıfırlama."""
         stats = {
