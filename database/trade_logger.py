@@ -75,6 +75,55 @@ class TradeLogger:
                 trade.pnl_pct = pnl_pct
                 trade.closed_at = utcnow()
 
+    def log_partial_tp(
+        self,
+        db_id: int,
+        tp1_price: float,
+        pnl: float,
+        pnl_pct: float,
+        half_qty: float,
+        half_margin: float,
+        tp2_price: float,
+        entry_price: float,
+        coin: str,
+        direction: str,
+        leverage: int,
+    ) -> int:
+        """
+        TP1 kısmi kapama:
+        - Orijinal kaydı yarı miktar/marjinle CLOSED_TP1 olarak kapatır.
+        - Kalan yarı için yeni OPEN kayıt açar (SL=entry/breakeven, TP=TP2).
+        Yeni kaydın id'sini döndürür.
+        """
+        with get_session() as session:
+            original = session.get(Trade, db_id)
+            if original:
+                original.quantity   = half_qty
+                original.margin_used = half_margin
+                original.exit_price = tp1_price
+                original.status     = "CLOSED_TP1"
+                original.pnl_usdt   = pnl
+                original.pnl_pct    = pnl_pct
+                original.closed_at  = utcnow()
+
+            continuation = Trade(
+                coin=coin,
+                direction=direction,
+                status="OPEN",
+                entry_price=entry_price,
+                stop_loss_price=entry_price,   # breakeven
+                take_profit_price=tp2_price,
+                quantity=half_qty,
+                margin_used=half_margin,
+                leverage=leverage,
+                is_paper=True,
+                combined_score=original.combined_score if original else 0.0,
+                signal_reasons=original.signal_reasons if original else "[]",
+            )
+            session.add(continuation)
+            session.flush()
+            return continuation.id
+
     def get_open_trades(self) -> list[dict]:
         with get_session() as session:
             trades = session.query(Trade).filter(Trade.status == "OPEN").all()

@@ -68,5 +68,6 @@ FEAR_GREED_WEIGHT  = 0.40
 FUNDING_FETCH_INTERVAL = 300   # 5 dakika (funding her 8 saatte sıfırlanır)
 
 # ── Risk ─────────────────────────────────────────────────────────────────────
-DEFAULT_RISK_REWARD = 2.0    # take-profit = stop mesafesi × 2
+DEFAULT_RISK_REWARD = 2.0    # TP1: stop mesafesi × 2  (%50 pozisyon)
+TP2_RISK_REWARD     = 3.5    # TP2: stop mesafesi × 3.5 (kalan %50)
 MIN_STOP_DISTANCE_PCT = 0.005  # minimum %0.5 stop

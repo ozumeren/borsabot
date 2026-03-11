@@ -9,6 +9,7 @@ from signals.combiner import FinalSignal
 from signals.technical_signal import Direction
 from risk.position_sizer import PositionSizer
 from risk.stop_loss import StopLossCalculator
+from config.constants import TP2_RISK_REWARD
 from risk.circuit_breaker import CircuitBreaker
 from utils.logger import get_logger
 from utils.helpers import format_usdt, format_pct, pct_change
@@ -35,6 +36,8 @@ class PaperPosition:
     atr: float = 0.0
     trailing_active: bool = False
     signal_reasons: list = field(default_factory=list)
+    take_profit2_price: float = 0.0   # TP2 hedefi (kalan %50 için)
+    tp1_hit: bool = False             # TP1 zaten tetiklendi mi
 
     @property
     def unrealized_pnl(self) -> float:
@@ -106,8 +109,9 @@ class PaperEngine:
             return None
 
         direction = "long" if signal.direction == Direction.LONG else "short"
-        sl_price = self.stop_calc.calculate_stop_loss(signal.direction, signal.entry_price)
-        tp_price = self.stop_calc.calculate_take_profit(signal.direction, signal.entry_price, sl_price)
+        sl_price  = self.stop_calc.calculate_stop_loss(signal.direction, signal.entry_price)
+        tp_price  = self.stop_calc.calculate_take_profit(signal.direction, signal.entry_price, sl_price)
+        tp2_price = self.stop_calc.calculate_take_profit(signal.direction, signal.entry_price, sl_price, rr_ratio=TP2_RISK_REWARD)
 
         sizing = self.position_sizer.calculate(
             portfolio_value=portfolio_value,
@@ -150,6 +154,7 @@ class PaperEngine:
             lowest_price=signal.entry_price,
             atr=signal.atr,
             signal_reasons=signal.reasons,
+            take_profit2_price=tp2_price,
         )
         self.positions[signal.coin] = pos
 
@@ -217,23 +222,91 @@ class PaperEngine:
                         )
                         pos.stop_loss_price = new_sl
 
-            # ── SL / TP / Acil Kapama Kontrolü ───────────────────────────────
+            # ── SL / TP1 / TP2 / Acil Kapama Kontrolü ───────────────────────
             sl_hit = (
                 (pos.direction == "long"  and price <= pos.stop_loss_price) or
                 (pos.direction == "short" and price >= pos.stop_loss_price)
             )
-            tp_hit = (
-                (pos.direction == "long"  and price >= pos.take_profit_price) or
-                (pos.direction == "short" and price <= pos.take_profit_price)
-            )
             emergency = self.circuit_breaker.should_emergency_close(pos.unrealized_pnl_pct)
 
-            if sl_hit or tp_hit or emergency:
-                status = "CLOSED_SL" if sl_hit else ("CLOSED_TP" if tp_hit else "CLOSED_CIRCUIT")
+            if not pos.tp1_hit:
+                # TP1 henüz tetiklenmedi — TP1 kontrolü
+                tp1_triggered = (
+                    (pos.direction == "long"  and price >= pos.take_profit_price) or
+                    (pos.direction == "short" and price <= pos.take_profit_price)
+                )
+                if tp1_triggered:
+                    self._partial_close_tp1(coin, pos, price)
+                    continue  # pozisyon devam ediyor, tam kapanmadı
+            else:
+                # TP1 oldu — TP2 kontrolü
+                tp2_triggered = (
+                    (pos.direction == "long"  and price >= pos.take_profit2_price) or
+                    (pos.direction == "short" and price <= pos.take_profit2_price)
+                )
+                if tp2_triggered:
+                    self._close_position(coin, pos, price, "CLOSED_TP")
+                    closed.append(coin)
+                    continue
+
+            if sl_hit or emergency:
+                status = "CLOSED_SL" if sl_hit else "CLOSED_CIRCUIT"
                 self._close_position(coin, pos, price, status)
                 closed.append(coin)
 
         return closed
+
+    def _partial_close_tp1(self, coin: str, pos: PaperPosition, tp1_price: float) -> None:
+        """TP1 tetiklendi: %50 kapat, SL'i breakeven'e çek, kalan %50 TP2'yi beklesin."""
+        half_qty    = pos.quantity / 2
+        half_margin = pos.margin / 2
+
+        if pos.direction == "long":
+            gross = (tp1_price - pos.entry_price) * half_qty
+        else:
+            gross = (pos.entry_price - tp1_price) * half_qty
+        fee = half_qty * (pos.entry_price + tp1_price) * OKX_FEE_PCT
+        pnl = gross - fee
+        pnl_pct = pnl / half_margin if half_margin > 0 else 0.0
+
+        self.circuit_breaker.update_pnl(pnl)
+        self.portfolio_value += pnl
+
+        # DB: orijinal kaydı kapat (yarı), kalan yarı için yeni kayıt aç
+        if pos.db_id:
+            new_db_id = self.trade_logger.log_partial_tp(
+                db_id=pos.db_id,
+                tp1_price=tp1_price,
+                pnl=pnl,
+                pnl_pct=pnl_pct,
+                half_qty=half_qty,
+                half_margin=half_margin,
+                tp2_price=pos.take_profit2_price,
+                entry_price=pos.entry_price,
+                coin=coin,
+                direction=pos.direction,
+                leverage=pos.leverage,
+            )
+            pos.db_id = new_db_id
+
+        # Pozisyonu güncelle: yarıya düşür, SL → breakeven, TP1 bitti
+        pos.quantity        = half_qty
+        pos.margin          = half_margin
+        pos.stop_loss_price = pos.entry_price  # breakeven
+        pos.tp1_hit         = True
+
+        logger.info(
+            "[PAPER] TP1 kısmi kapama — kalan %50 TP2'yi bekliyor",
+            coin=coin, tp1=tp1_price, pnl=format_usdt(pnl),
+            tp2=pos.take_profit2_price,
+        )
+
+        if self.notifier:
+            self.notifier.send_partial_tp(
+                coin, tp1_price, pnl, pnl_pct,
+                tp2_price=pos.take_profit2_price,
+                is_paper=True,
+            )
 
     def _close_position(self, coin: str, pos: PaperPosition, exit_price: float, status: str) -> None:
         # PnL'yi exit_price üzerinden hesapla (unrealized_pnl property'si kullanılmaz — fee çifte düşülmesin)

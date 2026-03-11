@@ -143,6 +143,27 @@ class TelegramNotifier:
         )
         self.send(text)
 
+    def send_partial_tp(
+        self,
+        coin: str,
+        tp1_price: float,
+        pnl: float,
+        pnl_pct: float,
+        tp2_price: float,
+        is_paper: bool = False,
+    ) -> None:
+        mode = "[PAPER]" if is_paper else "[CANLI]"
+        sign = "+" if pnl >= 0 else ""
+        text = (
+            f"✅ <b>{mode} TP1 — %50 Pozisyon Kapatıldı</b>\n"
+            f"Coin: <b>{coin}/USDT</b>\n"
+            f"Fiyat: {format_usdt(tp1_price)}\n"
+            f"PnL (½ pozisyon): 📈 {sign}{format_usdt(pnl)} ({format_pct(pnl_pct)})\n"
+            f"SL → Giriş fiyatına çekildi (breakeven)\n"
+            f"Kalan ½ → TP2 hedef: <b>{format_usdt(tp2_price)}</b>"
+        )
+        self.send(text)
+
     def send_alert(self, message: str) -> None:
         self.send(f"🔔 <b>UYARI</b>\n{message}")
 
