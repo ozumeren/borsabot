@@ -327,6 +327,10 @@ class BotEngine:
         if tech_signal.direction == Direction.NONE:
             return None
 
+        # Gerçek piyasa anlık fiyatı (sandbox değil) — monitor ile tutarlı
+        real_price = self.market_data.get_current_price(symbol)
+        entry_price = real_price if real_price else iv.close
+
         # Sentiment
         cp_news  = self.cryptopanic.fetch_news(coin, limit=5)
         cp_score = self.cryptopanic.calculate_sentiment_score(cp_news)
@@ -342,7 +346,7 @@ class BotEngine:
             fear_greed_index=fg_index,
             market_signal=market_signal,
             coin=coin,
-            entry_price=iv.close,
+            entry_price=entry_price,
         )
 
         if final_signal.is_actionable:
