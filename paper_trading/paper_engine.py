@@ -236,8 +236,13 @@ class PaperEngine:
         return closed
 
     def _close_position(self, coin: str, pos: PaperPosition, exit_price: float, status: str) -> None:
-        fee = pos.quantity * (pos.entry_price + exit_price) * OKX_FEE_PCT  # giriş + çıkış
-        pnl = pos.unrealized_pnl - fee
+        # PnL'yi exit_price üzerinden hesapla (unrealized_pnl property'si kullanılmaz — fee çifte düşülmesin)
+        if pos.direction == "long":
+            gross = (exit_price - pos.entry_price) * pos.quantity
+        else:
+            gross = (pos.entry_price - exit_price) * pos.quantity
+        fee = pos.quantity * (pos.entry_price + exit_price) * OKX_FEE_PCT
+        pnl = gross - fee
         pnl_pct = pnl / pos.margin if pos.margin > 0 else 0.0
 
         self.circuit_breaker.update_pnl(pnl)

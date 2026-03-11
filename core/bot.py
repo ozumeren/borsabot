@@ -76,6 +76,7 @@ class BotEngine:
         self.circuit_breaker = CircuitBreaker(
             daily_loss_limit_pct=settings.daily_loss_limit_pct,
             max_positions=settings.max_concurrent_positions,
+            single_position_emergency_pct=0.18,  # SL ~%9 (1.5% fiyat × 6x) + buffer → %18'den sonra emergency
         )
 
         # Korelasyon koruyucu
