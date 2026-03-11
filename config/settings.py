@@ -36,6 +36,7 @@ class BotSettings(BaseSettings):
 
     # ── Sentiment API'ları ────────────────────────────────────────────────────
     cryptopanic_api_key: str = Field(default="", alias="CRYPTOPANIC_API_KEY")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
 
     # ── Bildirimler ───────────────────────────────────────────────────────────
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")

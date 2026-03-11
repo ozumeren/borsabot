@@ -23,6 +23,7 @@ class BotState:
 
     # Haber cache
     news_cache: dict[str, list[str]] = field(default_factory=dict)  # coin → headlines
+    gemini_cache: dict[str, tuple] = field(default_factory=dict)    # coin → (score, reason)
     fear_greed_index: int = 50
 
     # Çoklu borsa piyasa verisi cache: coin → FundingSnapshot

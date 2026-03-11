@@ -13,6 +13,7 @@ from indicators.technical import TechnicalAnalyzer
 from sentiment.cryptopanic import CryptoPanicFetcher
 from sentiment.rss_feeds import RSSFeedFetcher
 from sentiment.fear_greed import FearGreedFetcher
+from sentiment.gemini_analyzer import GeminiAnalyzer
 from signals.technical_signal import TechnicalSignalGenerator, Direction
 from signals.combiner import SignalCombiner
 from risk.position_sizer import PositionSizer
@@ -52,9 +53,10 @@ class BotEngine:
         )
 
         # Sentiment
-        self.cryptopanic = CryptoPanicFetcher(settings.cryptopanic_api_key)
-        self.rss_fetcher = RSSFeedFetcher()
-        self.fear_greed  = FearGreedFetcher()
+        self.cryptopanic     = CryptoPanicFetcher(settings.cryptopanic_api_key)
+        self.rss_fetcher     = RSSFeedFetcher()
+        self.fear_greed      = FearGreedFetcher()
+        self.gemini_analyzer = GeminiAnalyzer(settings.gemini_api_key)
 
         # Çoklu borsa piyasa verisi (API key gerekmez)
         self.funding_fetcher = MultiExchangeFundingFetcher(
@@ -238,7 +240,15 @@ class BotEngine:
                 headlines    = self.rss_fetcher.filter_by_coin(all_articles, coin)
                 cp_news      = self.cryptopanic.fetch_news(coin, limit=10)
                 cp_headlines = self.cryptopanic.get_headlines(cp_news)
-                self.state.news_cache[coin] = list(set(headlines + cp_headlines))[:20]
+                all_headlines = list(set(headlines + cp_headlines))[:20]
+                self.state.news_cache[coin] = all_headlines
+
+                # Gemini ile AI sentiment analizi (cache'e yaz, rate limit için 5dk TTL)
+                if self.gemini_analyzer.enabled and all_headlines:
+                    score, reason = await asyncio.to_thread(
+                        self.gemini_analyzer.analyze, coin, all_headlines
+                    )
+                    self.state.gemini_cache[coin] = (score, reason)
 
         except Exception as e:
             logger.error("Haber çekme hatası", error=str(e))
@@ -481,6 +491,15 @@ class BotEngine:
         # Sentiment
         cp_news  = self.cryptopanic.fetch_news(coin, limit=5)
         cp_score = self.cryptopanic.calculate_sentiment_score(cp_news)
+
+        # Gemini AI analizi (fetch_news cache'inden — ek API çağrısı yok)
+        gemini_reason = ""
+        gemini_cached = self.state.gemini_cache.get(coin)
+        if gemini_cached:
+            gemini_score, gemini_reason = gemini_cached
+            # Gemini %60 + CryptoPanic %40 ağırlıklı ortalama
+            cp_score = 0.6 * gemini_score + 0.4 * cp_score
+
         fg_index = self.state.fear_greed_index
 
         # Çoklu borsa piyasa verisi (cache'den)
@@ -521,6 +540,9 @@ class BotEngine:
                 base_leverage=self.settings.leverage,
                 max_leverage=self.settings.max_leverage,
             )
+
+        if final_signal.is_actionable and gemini_reason:
+            final_signal.reasons.append(f"Gemini AI: {gemini_reason}")
 
         if final_signal.is_actionable:
             logger.info(
