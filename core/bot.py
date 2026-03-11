@@ -108,6 +108,8 @@ class BotEngine:
         self.state.portfolio_value = portfolio
         self.state.portfolio_value_at_day_start = portfolio
         self.circuit_breaker.set_portfolio_start(portfolio)
+        if self.settings.paper_trading:
+            self.engine.portfolio_value = portfolio  # paper başlangıç bakiyesi
 
         logger.info(
             "Bot başlatıldı",
@@ -153,7 +155,10 @@ class BotEngine:
             slots = self.settings.max_concurrent_positions - len(open_positions)
 
             for signal in signals[:slots]:
-                portfolio_val = self.client.get_portfolio_value()
+                if self.settings.paper_trading:
+                    portfolio_val = self.engine.portfolio_value
+                else:
+                    portfolio_val = self.client.get_portfolio_value()
                 self.state.portfolio_value = portfolio_val
 
                 if self.settings.paper_trading:
@@ -402,7 +407,10 @@ class BotEngine:
 
         elif command == "bakiye":
             try:
-                balance = self.client.get_portfolio_value()
+                if self.settings.paper_trading:
+                    balance = self.engine.portfolio_value
+                else:
+                    balance = self.client.get_portfolio_value()
                 open_count = len(self.engine.positions) if self.settings.paper_trading else len(self.state.open_positions)
                 mode = "📄 PAPER" if self.settings.paper_trading else "💰 CANLI"
                 self.notifier.send(

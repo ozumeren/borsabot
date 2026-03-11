@@ -65,6 +65,7 @@ class PaperEngine:
         self.trade_logger = trade_logger
         self.notifier = notifier
         self.positions: dict[str, PaperPosition] = {}
+        self.portfolio_value: float = 0.0   # paper bakiye — açılışta set edilir
 
     def restore_from_db(self) -> int:
         """Bot yeniden başlatılınca veritabanındaki açık pozisyonları belleğe yükler."""
@@ -195,6 +196,7 @@ class PaperEngine:
         pnl_pct = pnl / pos.margin if pos.margin > 0 else 0.0
 
         self.circuit_breaker.update_pnl(pnl)
+        self.portfolio_value += pnl
         self.trade_logger.log_close(pos.db_id, exit_price, status, pnl, pnl_pct)
 
         logger.info(
