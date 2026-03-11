@@ -230,65 +230,66 @@ class TelegramNotifier:
 
         while True:
             try:
-                async with httpx.AsyncClient(timeout=35.0) as client:
+                async with httpx.AsyncClient(timeout=12.0) as client:
                     resp = await client.get(
                         f"{self._base_url}/getUpdates",
-                        params={"offset": offset, "timeout": 30, "allowed_updates": ["message"]},
+                        params={"offset": offset, "timeout": 10, "allowed_updates": ["message"]},
                     )
                     data = resp.json()
 
                 if not data.get("ok"):
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(2)
                     continue
 
                 for update in data.get("result", []):
                     offset = update["update_id"] + 1
                     msg = update.get("message", {})
                     raw = msg.get("text", "").strip()
-                    cmd = raw.split("@")[0].lower()  # /kapat@botname → /kapat
+                    cmd = raw.split("@")[0].lower()
 
+                    # Her komutu ayrı task olarak çalıştır — polling loop bloke olmasın
                     if cmd in ("/durum", "/status"):
                         logger.info("Telegram /durum komutu")
-                        self.send_portfolio_status()
+                        asyncio.create_task(asyncio.to_thread(self.send_portfolio_status))
 
                     elif cmd == "/bakiye":
                         logger.info("Telegram /bakiye komutu")
                         if self._command_handler:
-                            await self._command_handler("bakiye")
+                            asyncio.create_task(self._command_handler("bakiye"))
 
                     elif cmd.startswith("/kapat "):
                         coin = raw.split(" ", 1)[1].upper().strip()
                         logger.info("Telegram /kapat komutu", coin=coin)
                         if self._command_handler:
-                            await self._command_handler("kapat", coin=coin)
+                            asyncio.create_task(self._command_handler("kapat", coin=coin))
                         else:
-                            self.send(f"⚠️ Komut işleyici hazır değil.")
+                            self.send("⚠️ Komut işleyici hazır değil.")
 
                     elif cmd == "/hepsiniKapat".lower():
                         logger.info("Telegram /hepsiniKapat komutu")
                         if self._command_handler:
-                            await self._command_handler("hepsiniKapat")
+                            asyncio.create_task(self._command_handler("hepsiniKapat"))
                         else:
                             self.send("⚠️ Komut işleyici hazır değil.")
 
                     elif cmd == "/durdur":
                         logger.info("Telegram /durdur komutu")
                         if self._command_handler:
-                            await self._command_handler("durdur")
+                            asyncio.create_task(self._command_handler("durdur"))
 
                     elif cmd == "/baslat":
                         logger.info("Telegram /baslat komutu")
                         if self._command_handler:
-                            await self._command_handler("baslat")
+                            asyncio.create_task(self._command_handler("baslat"))
 
                     elif cmd in ("/yardim", "/help", "/start"):
-                        self.send(HELP_TEXT)
+                        asyncio.create_task(asyncio.to_thread(self.send, HELP_TEXT))
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.debug("Telegram polling hatası", error=str(e))
-                await asyncio.sleep(10)
+                await asyncio.sleep(2)
 
     def _fetch_price(self, coin: str) -> float:
         """OKX public API'den anlık fiyat çeker (auth gerekmez)."""
