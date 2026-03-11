@@ -119,6 +119,14 @@ class BotEngine:
             f"Portföy: ${portfolio:,.2f}"
         )
 
+        # Restart sonrası açık pozisyonları DB'den geri yükle
+        if self.settings.paper_trading:
+            restored = self.engine.restore_from_db()
+            for coin, pos in self.engine.positions.items():
+                self.state.add_position(coin, pos)
+            if restored:
+                logger.info("Paper pozisyonlar geri yüklendi", count=restored)
+
         # Telegram /durum komutunu arka planda dinle
         asyncio.create_task(self.notifier.start_command_listener())
 

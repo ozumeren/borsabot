@@ -63,6 +63,29 @@ class PaperEngine:
         self.notifier = notifier
         self.positions: dict[str, PaperPosition] = {}
 
+    def restore_from_db(self) -> int:
+        """Bot yeniden başlatılınca veritabanındaki açık pozisyonları belleğe yükler."""
+        open_trades = self.trade_logger.get_open_trades()
+        for t in open_trades:
+            if t["coin"] in self.positions:
+                continue
+            pos = PaperPosition(
+                coin=t["coin"],
+                direction=t["direction"],
+                entry_price=t["entry_price"],
+                stop_loss_price=t["stop_loss_price"],
+                take_profit_price=t["take_profit_price"] or 0.0,
+                quantity=t["quantity"],
+                margin=t["margin_used"],
+                leverage=t["leverage"],
+                db_id=t["id"],
+                current_price=t["entry_price"],
+            )
+            self.positions[t["coin"]] = pos
+        if open_trades:
+            logger.info("Pozisyonlar DB'den yüklendi", count=len(open_trades))
+        return len(open_trades)
+
     def open_position(self, signal: FinalSignal, portfolio_value: float) -> Optional[PaperPosition]:
         allowed, reason = self.circuit_breaker.is_trading_allowed(len(self.positions))
         if not allowed:

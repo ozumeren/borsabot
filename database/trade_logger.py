@@ -75,9 +75,18 @@ class TradeLogger:
                 trade.pnl_pct = pnl_pct
                 trade.closed_at = utcnow()
 
-    def get_open_trades(self) -> list[Trade]:
+    def get_open_trades(self) -> list[dict]:
         with get_session() as session:
-            return session.query(Trade).filter(Trade.status == "OPEN").all()
+            trades = session.query(Trade).filter(Trade.status == "OPEN").all()
+            return [
+                {
+                    "id": t.id, "coin": t.coin, "direction": t.direction,
+                    "entry_price": t.entry_price, "stop_loss_price": t.stop_loss_price,
+                    "take_profit_price": t.take_profit_price, "quantity": t.quantity,
+                    "margin_used": t.margin_used, "leverage": t.leverage,
+                }
+                for t in trades
+            ]
 
     def log_daily_stats(self, stats: dict) -> None:
         today = datetime.date.today().isoformat()
