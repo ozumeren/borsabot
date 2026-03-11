@@ -589,7 +589,7 @@ class BotEngine:
                 if self.settings.paper_trading:
                     balance = self.engine.portfolio_value
                 else:
-                    balance = self.client.get_portfolio_value()
+                    balance = self.state.portfolio_value
                 open_count = len(self.engine.positions) if self.settings.paper_trading else len(self.state.open_positions)
                 mode = "📄 PAPER" if self.settings.paper_trading else "💰 CANLI"
                 self.notifier.send(
