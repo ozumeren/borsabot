@@ -288,6 +288,13 @@ class BotEngine:
         except Exception as e:
             logger.error("Funding fetch hatası", error=str(e))
 
+    async def send_live_status_update(self) -> None:
+        """Her dakika son durum mesajını düzenleyerek günceller."""
+        try:
+            await asyncio.to_thread(self.notifier.update_portfolio_status)
+        except Exception as e:
+            logger.debug("Canlı durum güncellemesi başarısız", error=str(e))
+
     async def send_pnl_update(self) -> None:
         """15 dakikada bir toplam PnL özetini Telegram'a gönderir."""
         try:

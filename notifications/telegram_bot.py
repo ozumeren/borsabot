@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import httpx
+from typing import Optional
 from utils.logger import get_logger
 from utils.helpers import format_usdt, format_pct
 
@@ -16,11 +17,13 @@ class TelegramNotifier:
         self.chat_id = chat_id
         self._base_url = f"https://api.telegram.org/bot{bot_token}"
         self._enabled = bool(bot_token and chat_id)
+        self._status_message_id: Optional[int] = None  # son durum mesajının ID'si
 
-    def send(self, text: str) -> bool:
+    def send(self, text: str) -> Optional[int]:
+        """Mesaj gönderir. Başarılıysa message_id döner, hata varsa None."""
         if not self._enabled:
             logger.debug("Telegram devre dışı (token/chat_id eksik)")
-            return False
+            return None
         try:
             with httpx.Client(timeout=10.0) as client:
                 resp = client.post(
@@ -32,9 +35,32 @@ class TelegramNotifier:
                     },
                 )
                 resp.raise_for_status()
-                return True
+                return resp.json().get("result", {}).get("message_id")
         except Exception as e:
             logger.warning("Telegram gönderim hatası", error=str(e))
+            return None
+
+    def _edit_message(self, message_id: int, text: str) -> bool:
+        """Var olan mesajı düzenler. 'not modified' hatasını sessizce geçer."""
+        if not self._enabled:
+            return False
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(
+                    f"{self._base_url}/editMessageText",
+                    json={
+                        "chat_id": self.chat_id,
+                        "message_id": message_id,
+                        "text": text,
+                        "parse_mode": "HTML",
+                    },
+                )
+                if resp.status_code == 400 and "not modified" in resp.text:
+                    return True  # içerik aynı, sorun değil
+                resp.raise_for_status()
+                return True
+        except Exception as e:
+            logger.debug("Telegram edit hatası", error=str(e))
             return False
 
     def send_trade_opened(self, pos, is_paper: bool = False) -> None:
@@ -128,89 +154,106 @@ class TelegramNotifier:
         )
         self.send(text)
 
-    def send_portfolio_status(self) -> None:
-        """Veritabanından portföy durumunu çekip Telegram'a gönderir."""
+    def _build_status_text(self) -> str:
+        """Portföy durum metnini oluşturur."""
         from database.db import init_db, get_session
         from database.models import Trade, DailyStats
         from sqlalchemy import func
 
-        try:
-            init_db()
-            with get_session() as session:
-                # Açık pozisyonlar
-                open_trades = session.query(Trade).filter(Trade.status == "OPEN").all()
-                now_utc = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-                lines = [f"🤖 <b>PORTFÖY DURUMU</b>  <i>{now_utc}</i>\n"]
+        init_db()
+        with get_session() as session:
+            open_trades = session.query(Trade).filter(Trade.status == "OPEN").all()
+            now_utc = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            lines = [f"🤖 <b>PORTFÖY DURUMU</b>  <i>{now_utc}</i>\n"]
 
-                lines.append(f"📂 <b>Açık Pozisyonlar ({len(open_trades)})</b>")
-                if not open_trades:
-                    lines.append("  — Açık pozisyon yok")
-                else:
-                    total_margin = 0.0
-                    for t in open_trades:
-                        yön = "🟢 LONG" if t.direction == "long" else "🔴 SHORT"
-                        dur = datetime.datetime.utcnow() - t.opened_at
-                        h = int(dur.total_seconds() // 3600)
-                        m = int((dur.total_seconds() % 3600) // 60)
-                        current = self._fetch_price(t.coin)
-                        price_line = ""
-                        if current > 0 and t.entry_price > 0:
-                            chg = (current - t.entry_price) / t.entry_price
-                            if t.direction == "short":
-                                chg = -chg
-                            notional = t.margin_used * t.leverage
-                            fee = notional * 0.002  # %0.10 giriş + %0.10 çıkış (taker fee)
-                            unreal = chg * notional - fee
-                            sign = "+" if unreal >= 0 else ""
-                            price_line = (
-                                f"\n  Anlık: <b>{format_usdt(current)}</b> "
-                                f"({'+' if chg>=0 else ''}{chg*100:.2f}%)  "
-                                f"Net PnL: <b>{sign}{format_usdt(unreal)}</b>"
-                            )
-                        lines.append(
-                            f"  <b>{t.coin}</b> {yön} {t.leverage}x | Giriş: {format_usdt(t.entry_price)}"
-                            f"{price_line}\n"
-                            f"  SL: {format_usdt(t.stop_loss_price)} | TP: {format_usdt(t.take_profit_price or 0)}\n"
-                            f"  Margin: {format_usdt(t.margin_used)} | Skor: {t.combined_score:.2f} | {h}s {m}dk"
+            lines.append(f"📂 <b>Açık Pozisyonlar ({len(open_trades)})</b>")
+            if not open_trades:
+                lines.append("  — Açık pozisyon yok")
+            else:
+                total_margin = 0.0
+                for t in open_trades:
+                    yön = "🟢 LONG" if t.direction == "long" else "🔴 SHORT"
+                    dur = datetime.datetime.utcnow() - t.opened_at
+                    h = int(dur.total_seconds() // 3600)
+                    m = int((dur.total_seconds() % 3600) // 60)
+                    current = self._fetch_price(t.coin)
+                    price_line = ""
+                    if current > 0 and t.entry_price > 0:
+                        chg = (current - t.entry_price) / t.entry_price
+                        if t.direction == "short":
+                            chg = -chg
+                        notional = t.margin_used * t.leverage
+                        fee = notional * 0.002
+                        unreal = chg * notional - fee
+                        sign = "+" if unreal >= 0 else ""
+                        price_line = (
+                            f"\n  Anlık: <b>{format_usdt(current)}</b> "
+                            f"({'+' if chg>=0 else ''}{chg*100:.2f}%)  "
+                            f"Net PnL: <b>{sign}{format_usdt(unreal)}</b>"
                         )
-                        total_margin += t.margin_used
-                    lines.append(f"  Kullanılan margin: <b>{format_usdt(total_margin)}</b>")
-
-                # Bugünkü istatistikler
-                today = datetime.date.today().isoformat()
-                stats = session.query(DailyStats).filter_by(date=today).first()
-                lines.append(f"\n📊 <b>Bugün ({today})</b>")
-                if not stats or not stats.total_trades:
-                    lines.append("  — Henüz kapalı işlem yok")
-                else:
-                    total = stats.total_trades
-                    wr = (stats.winning_trades / total * 100) if total else 0
-                    pnl = stats.total_pnl_usdt or 0.0
-                    pnl_sign = "+" if pnl >= 0 else ""
-                    cb = "🔴 Ateşlendi" if stats.circuit_breaker_fired else "🟢 Aktif"
                     lines.append(
-                        f"  İşlem: {total} | ✅ {stats.winning_trades} / ❌ {stats.losing_trades}\n"
-                        f"  Kazanma: {wr:.1f}% | PnL: <b>{pnl_sign}{format_usdt(pnl)}</b>\n"
-                        f"  Circuit Breaker: {cb}"
+                        f"  <b>{t.coin}</b> {yön} {t.leverage}x | Giriş: {format_usdt(t.entry_price)}"
+                        f"{price_line}\n"
+                        f"  SL: {format_usdt(t.stop_loss_price)} | TP: {format_usdt(t.take_profit_price or 0)}\n"
+                        f"  Margin: {format_usdt(t.margin_used)} | Skor: {t.combined_score:.2f} | {h}s {m}dk"
                     )
+                    total_margin += t.margin_used
+                lines.append(f"  Kullanılan margin: <b>{format_usdt(total_margin)}</b>")
 
-                # Tüm zamanlar
-                closed = session.query(Trade).filter(Trade.status != "OPEN")
-                total_all = closed.count()
-                wins_all = closed.filter(Trade.pnl_usdt > 0).count()
-                total_pnl_all = session.query(func.sum(Trade.pnl_usdt)).filter(Trade.status != "OPEN").scalar() or 0.0
-                wr_all = (wins_all / total_all * 100) if total_all else 0
-                pnl_sign = "+" if total_pnl_all >= 0 else ""
+            today = datetime.date.today().isoformat()
+            stats = session.query(DailyStats).filter_by(date=today).first()
+            lines.append(f"\n📊 <b>Bugün ({today})</b>")
+            if not stats or not stats.total_trades:
+                lines.append("  — Henüz kapalı işlem yok")
+            else:
+                total = stats.total_trades
+                wr = (stats.winning_trades / total * 100) if total else 0
+                pnl = stats.total_pnl_usdt or 0.0
+                pnl_sign = "+" if pnl >= 0 else ""
+                cb = "🔴 Ateşlendi" if stats.circuit_breaker_fired else "🟢 Aktif"
                 lines.append(
-                    f"\n📈 <b>Tüm Zamanlar</b>\n"
-                    f"  Kapalı: {total_all} | Kazanma: {wr_all:.1f}%\n"
-                    f"  Toplam PnL: <b>{pnl_sign}{format_usdt(total_pnl_all)}</b>"
+                    f"  İşlem: {total} | ✅ {stats.winning_trades} / ❌ {stats.losing_trades}\n"
+                    f"  Kazanma: {wr:.1f}% | PnL: <b>{pnl_sign}{format_usdt(pnl)}</b>\n"
+                    f"  Circuit Breaker: {cb}"
                 )
 
-                self.send("\n".join(lines))
+            closed = session.query(Trade).filter(Trade.status != "OPEN")
+            total_all = closed.count()
+            wins_all = closed.filter(Trade.pnl_usdt > 0).count()
+            total_pnl_all = session.query(func.sum(Trade.pnl_usdt)).filter(Trade.status != "OPEN").scalar() or 0.0
+            wr_all = (wins_all / total_all * 100) if total_all else 0
+            pnl_sign = "+" if total_pnl_all >= 0 else ""
+            lines.append(
+                f"\n📈 <b>Tüm Zamanlar</b>\n"
+                f"  Kapalı: {total_all} | Kazanma: {wr_all:.1f}%\n"
+                f"  Toplam PnL: <b>{pnl_sign}{format_usdt(total_pnl_all)}</b>"
+            )
+
+        return "\n".join(lines)
+
+    def send_portfolio_status(self) -> None:
+        """/durum komutu: yeni mesaj gönderir, message_id'yi saklar."""
+        try:
+            text = self._build_status_text()
+            msg_id = self.send(text)
+            if msg_id:
+                self._status_message_id = msg_id
         except Exception as e:
             logger.warning("Portföy durumu gönderilemedi", error=str(e))
             self.send(f"❌ Portföy durumu alınamadı: {e}")
+
+    def update_portfolio_status(self) -> None:
+        """Otomatik güncelleme: son durum mesajını düzenler, yoksa yeni gönderir."""
+        try:
+            text = self._build_status_text()
+            if self._status_message_id:
+                self._edit_message(self._status_message_id, text)
+            else:
+                msg_id = self.send(text)
+                if msg_id:
+                    self._status_message_id = msg_id
+        except Exception as e:
+            logger.debug("Durum güncellemesi başarısız", error=str(e))
 
     def set_command_handler(self, handler) -> None:
         """Bot engine'den komut callback'i kaydeder."""
