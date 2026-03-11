@@ -34,6 +34,7 @@ class PaperPosition:
     lowest_price: float = 0.0    # trailing stop için
     atr: float = 0.0
     trailing_active: bool = False
+    signal_reasons: list = field(default_factory=list)
 
     @property
     def unrealized_pnl(self) -> float:
@@ -148,6 +149,7 @@ class PaperEngine:
             highest_price=signal.entry_price,
             lowest_price=signal.entry_price,
             atr=signal.atr,
+            signal_reasons=signal.reasons,
         )
         self.positions[signal.coin] = pos
 
@@ -251,6 +253,9 @@ class PaperEngine:
         )
 
         if self.notifier:
-            self.notifier.send_trade_closed(coin, status, pnl, pnl_pct, is_paper=True)
+            self.notifier.send_trade_closed(
+                coin, status, pnl, pnl_pct, is_paper=True,
+                entry_price=pos.entry_price, exit_price=exit_price,
+            )
 
         del self.positions[coin]

@@ -182,7 +182,10 @@ class TradeExecutor:
                 coin=coin, reason=reason,
                 exit=exit_price, pnl=f"{pnl_sign}{pnl:.2f} USDT",
             )
-            self.notifier.send_trade_closed(coin, reason, pnl, pnl_pct, is_paper=False)
+            self.notifier.send_trade_closed(
+                coin, reason, pnl, pnl_pct, is_paper=False,
+                entry_price=record.entry_price, exit_price=exit_price,
+            )
             return True
 
         except Exception as e:

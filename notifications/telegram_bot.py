@@ -40,15 +40,21 @@ class TelegramNotifier:
     def send_trade_opened(self, pos, is_paper: bool = False) -> None:
         mode = "[PAPER]" if is_paper else "[CANLI]"
         direction_emoji = "🟢 LONG" if pos.direction == "long" else "🔴 SHORT"
+        margin = getattr(pos, "margin", None) or getattr(pos, "margin_used", 0.0)
+        reasons = getattr(pos, "signal_reasons", [])
+        reasons_text = ""
+        if reasons:
+            bullet = "\n".join(f"  • {r}" for r in reasons)
+            reasons_text = f"\n\n<b>Neden açıldı?</b>\n{bullet}"
         text = (
             f"<b>{mode} YENİ POZİSYON</b>\n"
             f"Coin: <b>{pos.coin}/USDT</b>\n"
             f"Yön: {direction_emoji} ({pos.leverage}x)\n"
             f"Giriş: {format_usdt(pos.entry_price)}\n"
+            f"Hedef: {format_usdt(pos.take_profit_price)}\n"
             f"Stop-Loss: {format_usdt(pos.stop_loss_price)}\n"
-            f"Take-Profit: {format_usdt(pos.take_profit_price)}\n"
-            f"Miktar: {pos.quantity:.4f} ({format_usdt(pos.quantity * pos.entry_price)})\n"
-            f"Teminat: {format_usdt(pos.margin)}"
+            f"Teminat: {format_usdt(margin)}"
+            f"{reasons_text}"
         )
         self.send(text)
 
@@ -59,20 +65,30 @@ class TelegramNotifier:
         pnl: float,
         pnl_pct: float,
         is_paper: bool = False,
+        entry_price: float = 0.0,
+        exit_price: float = 0.0,
     ) -> None:
         mode = "[PAPER]" if is_paper else "[CANLI]"
         status_map = {
-            "CLOSED_TP": "✅ TAKE PROFIT HIT",
-            "CLOSED_SL": "❌ STOP LOSS HIT",
-            "CLOSED_CIRCUIT": "⚠️ ACİL KAPAMA",
-            "CLOSED_MANUAL": "🔵 MANUEL KAPAMA",
+            "CLOSED_TP": "✅ Hedef fiyata ulaştı (Take Profit)",
+            "CLOSED_SL": "❌ Stop loss tetiklendi",
+            "CLOSED_CIRCUIT": "⚠️ Acil kapama — likidayon/günlük limit riski",
+            "CLOSED_MANUAL": "🔵 Manuel kapatma (/kapat komutu)",
         }
         status_text = status_map.get(status, status)
         pnl_emoji = "📈" if pnl >= 0 else "📉"
+        price_line = ""
+        if entry_price > 0 and exit_price > 0:
+            chg = (exit_price - entry_price) / entry_price * 100
+            price_line = (
+                f"\nGiriş: {format_usdt(entry_price)} → Çıkış: {format_usdt(exit_price)}"
+                f" ({'+' if chg >= 0 else ''}{chg:.2f}%)"
+            )
         text = (
             f"<b>{mode} POZİSYON KAPANDI</b>\n"
-            f"{status_text}\n"
             f"Coin: <b>{coin}/USDT</b>\n"
+            f"{status_text}"
+            f"{price_line}\n"
             f"PnL: {pnl_emoji} {format_usdt(pnl)} ({format_pct(pnl_pct)})"
         )
         self.send(text)
