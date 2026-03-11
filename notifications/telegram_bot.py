@@ -152,7 +152,7 @@ class TelegramNotifier:
                                 f"Net PnL: <b>{sign}{format_usdt(unreal)}</b>"
                             )
                         lines.append(
-                            f"  <b>{t.coin}</b> {yön} | Giriş: {format_usdt(t.entry_price)}"
+                            f"  <b>{t.coin}</b> {yön} {t.leverage}x | Giriş: {format_usdt(t.entry_price)}"
                             f"{price_line}\n"
                             f"  SL: {format_usdt(t.stop_loss_price)} | TP: {format_usdt(t.take_profit_price or 0)}\n"
                             f"  Margin: {format_usdt(t.margin_used)} | Skor: {t.combined_score:.2f} | {h}s {m}dk"
