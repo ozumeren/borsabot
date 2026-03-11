@@ -65,6 +65,12 @@ class CircuitBreaker:
     def is_halted(self) -> bool:
         return self._halted
 
+    @is_halted.setter
+    def is_halted(self, value: bool) -> None:
+        self._halted = value
+        if not value:
+            self._halt_reason = ""
+
     @property
     def daily_pnl(self) -> float:
         return self._daily_pnl

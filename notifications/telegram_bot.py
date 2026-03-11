@@ -196,16 +196,36 @@ class TelegramNotifier:
             logger.warning("Portföy durumu gönderilemedi", error=str(e))
             self.send(f"❌ Portföy durumu alınamadı: {e}")
 
+    def set_command_handler(self, handler) -> None:
+        """Bot engine'den komut callback'i kaydeder."""
+        self._command_handler = handler
+
     async def start_command_listener(self) -> None:
         """
-        Telegram'dan gelen /durum komutunu dinler ve portföy raporunu gönderir.
-        Bot başladığında arka planda asyncio task olarak çalışır.
+        Telegram komutlarını dinler. Desteklenen komutlar:
+          /durum        — portföy durumu
+          /kapat <COIN> — belirtilen coini kapat (ör: /kapat ETH)
+          /hepsiniKapat — tüm açık pozisyonları kapat
+          /durdur       — yeni işlem açmayı durdur
+          /baslat       — yeni işlem açmaya izin ver
+          /yardim       — komut listesi
         """
         if not self._enabled:
             return
 
         offset = 0
-        logger.info("Telegram komut dinleyici başlatıldı (/durum)")
+        self._command_handler = getattr(self, "_command_handler", None)
+        logger.info("Telegram komut dinleyici başlatıldı")
+
+        HELP_TEXT = (
+            "🤖 <b>Kullanılabilir Komutlar</b>\n\n"
+            "/durum — Portföy durumu\n"
+            "/kapat ETH — ETH pozisyonunu kapat\n"
+            "/hepsiniKapat — Tüm pozisyonları kapat\n"
+            "/durdur — Yeni işlem açmayı durdur\n"
+            "/baslat — Yeni işlem açmaya izin ver\n"
+            "/yardim — Bu listeyi göster"
+        )
 
         while True:
             try:
@@ -223,10 +243,40 @@ class TelegramNotifier:
                 for update in data.get("result", []):
                     offset = update["update_id"] + 1
                     msg = update.get("message", {})
-                    text = msg.get("text", "").strip().lower()
-                    if text in ("/durum", "/status", "/durum@" + self._bot_username()):
-                        logger.info("Telegram /durum komutu alındı")
+                    raw = msg.get("text", "").strip()
+                    cmd = raw.split("@")[0].lower()  # /kapat@botname → /kapat
+
+                    if cmd in ("/durum", "/status"):
+                        logger.info("Telegram /durum komutu")
                         self.send_portfolio_status()
+
+                    elif cmd.startswith("/kapat "):
+                        coin = raw.split(" ", 1)[1].upper().strip()
+                        logger.info("Telegram /kapat komutu", coin=coin)
+                        if self._command_handler:
+                            await self._command_handler("kapat", coin=coin)
+                        else:
+                            self.send(f"⚠️ Komut işleyici hazır değil.")
+
+                    elif cmd == "/hepsiniKapat".lower():
+                        logger.info("Telegram /hepsiniKapat komutu")
+                        if self._command_handler:
+                            await self._command_handler("hepsiniKapat")
+                        else:
+                            self.send("⚠️ Komut işleyici hazır değil.")
+
+                    elif cmd == "/durdur":
+                        logger.info("Telegram /durdur komutu")
+                        if self._command_handler:
+                            await self._command_handler("durdur")
+
+                    elif cmd == "/baslat":
+                        logger.info("Telegram /baslat komutu")
+                        if self._command_handler:
+                            await self._command_handler("baslat")
+
+                    elif cmd in ("/yardim", "/help", "/start"):
+                        self.send(HELP_TEXT)
 
             except asyncio.CancelledError:
                 break

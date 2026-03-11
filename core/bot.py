@@ -127,7 +127,8 @@ class BotEngine:
             if restored:
                 logger.info("Paper pozisyonlar geri yüklendi", count=restored)
 
-        # Telegram /durum komutunu arka planda dinle
+        # Telegram komut handler'ını kaydet ve dinleyiciyi başlat
+        self.notifier.set_command_handler(self._handle_telegram_command)
         asyncio.create_task(self.notifier.start_command_listener())
 
     # ── Scheduler'dan çağrılan job'lar ───────────────────────────────────────
@@ -360,6 +361,44 @@ class BotEngine:
             )
 
         return final_signal
+
+    async def _handle_telegram_command(self, command: str, **kwargs) -> None:
+        """Telegram'dan gelen komutları işler."""
+        if command == "kapat":
+            coin = kwargs.get("coin", "").upper()
+            pos = self.engine.positions.get(coin) if self.settings.paper_trading else None
+            if pos:
+                price = self.market_data.get_current_price(f"{coin}/USDT:USDT") or pos.entry_price
+                self.engine._close_position(coin, pos, price, "CLOSED_MANUAL")
+                del self.engine.positions[coin]
+                self.state.remove_position(coin)
+                self.notifier.send(f"✅ <b>{coin}</b> pozisyonu manuel olarak kapatıldı.")
+            else:
+                self.notifier.send(f"⚠️ <b>{coin}</b> için açık pozisyon bulunamadı.")
+
+        elif command == "hepsiniKapat":
+            if self.settings.paper_trading:
+                coins = list(self.engine.positions.keys())
+                if not coins:
+                    self.notifier.send("ℹ️ Kapatılacak açık pozisyon yok.")
+                    return
+                for coin in coins:
+                    pos = self.engine.positions[coin]
+                    price = self.market_data.get_current_price(f"{coin}/USDT:USDT") or pos.entry_price
+                    self.engine._close_position(coin, pos, price, "CLOSED_MANUAL")
+                    self.state.remove_position(coin)
+                self.engine.positions.clear()
+                self.notifier.send(f"✅ {len(coins)} pozisyon kapatıldı: {', '.join(coins)}")
+            else:
+                self.notifier.send("⚠️ Canlı modda manuel kapama henüz desteklenmiyor.")
+
+        elif command == "durdur":
+            self.circuit_breaker.is_halted = True
+            self.notifier.send("🔴 <b>Bot durduruldu.</b> Yeni işlem açılmayacak.\n/baslat ile devam ettir.")
+
+        elif command == "baslat":
+            self.circuit_breaker.is_halted = False
+            self.notifier.send("🟢 <b>Bot devam ediyor.</b> Yeni işlemler açılabilir.")
 
     async def _sync_live_positions(self) -> None:
         """Canlı modda OKX pozisyon durumunu senkronize et."""
