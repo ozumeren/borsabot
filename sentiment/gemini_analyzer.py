@@ -8,7 +8,7 @@ logger = get_logger("sentiment.gemini")
 
 GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/v1"
-    "/models/gemini-2.5-flash:generateContent"
+    "/models/gemini-2.5-flash-lite:generateContent"
 )
 CACHE_TTL = 600  # 10 dakika
 
