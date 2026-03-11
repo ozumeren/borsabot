@@ -220,6 +220,7 @@ class TelegramNotifier:
         HELP_TEXT = (
             "🤖 <b>Kullanılabilir Komutlar</b>\n\n"
             "/durum — Portföy durumu\n"
+            "/bakiye — OKX bakiyesi\n"
             "/kapat ETH — ETH pozisyonunu kapat\n"
             "/hepsiniKapat — Tüm pozisyonları kapat\n"
             "/durdur — Yeni işlem açmayı durdur\n"
@@ -249,6 +250,11 @@ class TelegramNotifier:
                     if cmd in ("/durum", "/status"):
                         logger.info("Telegram /durum komutu")
                         self.send_portfolio_status()
+
+                    elif cmd == "/bakiye":
+                        logger.info("Telegram /bakiye komutu")
+                        if self._command_handler:
+                            await self._command_handler("bakiye")
 
                     elif cmd.startswith("/kapat "):
                         coin = raw.split(" ", 1)[1].upper().strip()

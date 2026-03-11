@@ -400,6 +400,19 @@ class BotEngine:
             self.circuit_breaker.is_halted = False
             self.notifier.send("🟢 <b>Bot devam ediyor.</b> Yeni işlemler açılabilir.")
 
+        elif command == "bakiye":
+            try:
+                balance = self.client.get_portfolio_value()
+                open_count = len(self.engine.positions) if self.settings.paper_trading else len(self.state.open_positions)
+                mode = "📄 PAPER" if self.settings.paper_trading else "💰 CANLI"
+                self.notifier.send(
+                    f"💳 <b>Bakiye</b> ({mode})\n"
+                    f"USDT: <b>${balance:,.2f}</b>\n"
+                    f"Açık Pozisyon: {open_count}"
+                )
+            except Exception as e:
+                self.notifier.send(f"❌ Bakiye alınamadı: {e}")
+
     async def _sync_live_positions(self) -> None:
         """Canlı modda OKX pozisyon durumunu senkronize et."""
         try:
