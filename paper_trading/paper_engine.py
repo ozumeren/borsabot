@@ -33,10 +33,13 @@ class PaperPosition:
 
     @property
     def unrealized_pnl(self) -> float:
+        """Komisyon dahil gerçekleşmemiş PnL (giriş + tahmini çıkış fee)."""
         if self.direction == "long":
-            return (self.current_price - self.entry_price) * self.quantity
+            gross = (self.current_price - self.entry_price) * self.quantity
         else:
-            return (self.entry_price - self.current_price) * self.quantity
+            gross = (self.entry_price - self.current_price) * self.quantity
+        fee = self.quantity * (self.entry_price + self.current_price) * OKX_FEE_PCT
+        return gross - fee
 
     @property
     def unrealized_pnl_pct(self) -> float:
@@ -187,7 +190,7 @@ class PaperEngine:
         return closed
 
     def _close_position(self, coin: str, pos: PaperPosition, exit_price: float, status: str) -> None:
-        fee = pos.quantity * exit_price * OKX_FEE_PCT * 2  # giriş + çıkış
+        fee = pos.quantity * (pos.entry_price + exit_price) * OKX_FEE_PCT  # giriş + çıkış
         pnl = pos.unrealized_pnl - fee
         pnl_pct = pnl / pos.margin if pos.margin > 0 else 0.0
 

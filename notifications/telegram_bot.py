@@ -142,12 +142,14 @@ class TelegramNotifier:
                             chg = (current - t.entry_price) / t.entry_price
                             if t.direction == "short":
                                 chg = -chg
-                            unreal = chg * t.margin_used * t.leverage
+                            notional = t.margin_used * t.leverage
+                            fee = notional * 0.001  # %0.05 giriş + %0.05 çıkış
+                            unreal = chg * notional - fee
                             sign = "+" if unreal >= 0 else ""
                             price_line = (
                                 f"\n  Anlık: <b>{format_usdt(current)}</b> "
                                 f"({'+' if chg>=0 else ''}{chg*100:.2f}%)  "
-                                f"PnL: <b>{sign}{format_usdt(unreal)}</b>"
+                                f"Net PnL: <b>{sign}{format_usdt(unreal)}</b>"
                             )
                         lines.append(
                             f"  <b>{t.coin}</b> {yön} | Giriş: {format_usdt(t.entry_price)}"
