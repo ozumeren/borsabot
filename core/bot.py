@@ -119,6 +119,9 @@ class BotEngine:
             raise ConnectionError("OKX API bağlantısı kurulamadı!")
 
         portfolio = self.client.get_portfolio_value()
+        # Paper modda PAPER_INITIAL_BALANCE ayarlıysa onu kullan
+        if self.settings.paper_trading and self.settings.paper_initial_balance > 0:
+            portfolio = self.settings.paper_initial_balance
         self.state.portfolio_value = portfolio
         self.state.portfolio_value_at_day_start = portfolio
         self.circuit_breaker.set_portfolio_start(portfolio)

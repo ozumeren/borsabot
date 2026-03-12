@@ -47,6 +47,7 @@ class BotSettings(BaseSettings):
 
     # ── Güvenlik ─────────────────────────────────────────────────────────────
     paper_trading: bool = Field(default=True, alias="PAPER_TRADING")
+    paper_initial_balance: float = Field(default=0.0, alias="PAPER_INITIAL_BALANCE")
 
     def validate_for_live(self) -> list[str]:
         """Canlı trading için gerekli alanları kontrol eder."""
