@@ -91,6 +91,48 @@ class GeminiAnalyzer:
 
         return 0.0, ""
 
+    def analyze_scan(self, scan_summary: str) -> str:
+        """
+        Tarama sonuçlarını Gemini ile yorumlar.
+        scan_summary: tarama özetini içeren metin
+        Dönüş: Türkçe yorum metni (string)
+        """
+        if not self.enabled:
+            return ""
+        prompt = (
+            "Sen bir kripto futures trading uzmanısın. "
+            "Aşağıda bir piyasa tarama sonucu var. "
+            "Bu sonuçlara ve genel piyasa koşullarına bakarak:\n"
+            "1. Şu an giriş yapmak mantıklı mı yoksa beklemek mi gerekir?\n"
+            "2. En güçlü fırsatı 1-2 cümleyle değerlendir.\n"
+            "3. Dikkat edilmesi gereken risk varsa belirt.\n\n"
+            f"TARAMA SONUÇLARI:\n{scan_summary}\n\n"
+            "Türkçe, 3-5 cümle, net ve özlü cevap ver. JSON değil, düz metin."
+        )
+        for idx, (version, model_name) in enumerate(MODELS):
+            blocked_until = self._model_blocked_until.get(idx, 0)
+            if time.time() < blocked_until:
+                continue
+            url = f"https://generativelanguage.googleapis.com/{version}/models/{model_name}:generateContent?key={self.api_key}"
+            try:
+                with httpx.Client(timeout=25.0) as client:
+                    resp = client.post(
+                        url,
+                        json={
+                            "contents": [{"parts": [{"text": prompt}]}],
+                            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 300},
+                        },
+                    )
+                if resp.status_code == 429:
+                    self._model_blocked_until[idx] = time.time() + 300
+                    continue
+                resp.raise_for_status()
+                return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except Exception as e:
+                logger.warning("Gemini scan yorumu hatası", model=model_name, error=str(e))
+                continue
+        return ""
+
     def _build_prompt(self, coin: str, headlines: list[str]) -> str:
         headlines_text = "\n".join(f"- {h}" for h in headlines[:8])
         return (

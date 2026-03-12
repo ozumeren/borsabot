@@ -717,6 +717,28 @@ class BotEngine:
         lines.append("\n💡 Girmek için: <code>/ac BTC</code>")
         return "\n\n".join(lines)
 
+    def _build_scan_summary(self, results: list) -> str:
+        """Gemini'ye gönderilecek tarama özetini oluşturur."""
+        trading_threshold = self.settings.min_combined_score
+        fg = self.state.fear_greed_index
+        lines = [f"Fear & Greed Index: {fg}/100"]
+        for signal, iv, mtf_ok in results[:5]:
+            direction = "LONG" if signal.direction.value == "long" else "SHORT"
+            actionable = signal.combined_score >= trading_threshold and mtf_ok
+            sl  = self.stop_calc.calculate_stop_loss(signal.direction, signal.entry_price, signal.atr)
+            tp1 = self.stop_calc.calculate_take_profit(signal.direction, signal.entry_price, sl)
+            sl_pct  = abs(signal.entry_price - sl) / signal.entry_price * 100
+            tp1_pct = abs(tp1 - signal.entry_price) / signal.entry_price * 100
+            lines.append(
+                f"{signal.coin} {direction}: skor={signal.combined_score:.2f} "
+                f"(teknik={signal.technical_score:.2f}, sentiment={signal.sentiment_score:.2f}) "
+                f"fiyat={signal.entry_price} SL=%{sl_pct:.1f} TP=%{tp1_pct:.1f} "
+                f"MTF={'uyumlu' if mtf_ok else 'ters'} "
+                f"ADX={iv.adx:.1f} RSI={iv.rsi:.1f} "
+                f"{'→ TRADE AÇILIR' if actionable else '→ eşik altı/MTF ters'}"
+            )
+        return "\n".join(lines)
+
     async def _open_coin_by_command(self, coin: str) -> None:
         """Belirtilen coin için pozisyon açar. Önce cache'e bakar, yoksa fresh eval yapar."""
         from utils.helpers import format_usdt
@@ -926,6 +948,14 @@ class BotEngine:
                 self.state.scan_results = results
                 msg = self._format_scan_results(results)
                 self.notifier.send(msg)
+                # Gemini ile genel yorum
+                if self.gemini_analyzer.enabled and results:
+                    summary = self._build_scan_summary(results)
+                    commentary = await asyncio.to_thread(
+                        self.gemini_analyzer.analyze_scan, summary
+                    )
+                    if commentary:
+                        self.notifier.send(f"🤖 <b>Gemini Yorumu</b>\n\n{commentary}")
             except Exception as e:
                 self.notifier.send(f"❌ Tarama başarısız: {e}")
 
