@@ -159,9 +159,22 @@ class BotEngine:
             if not symbols:
                 return
 
+            SL_COOLDOWN_SECS = 45 * 60  # 45 dakika
+            now = time.time()
+            # Süresi dolan cooldown'ları temizle
+            self.state.sl_cooldown = {
+                c: ts for c, ts in self.state.sl_cooldown.items()
+                if now - ts < SL_COOLDOWN_SECS
+            }
+
             signals = []          # (FinalSignal, IndicatorValues) pairs
             for symbol in symbols:
                 coin = coin_from_symbol(symbol)
+                # SL cooldown aktifse bu coini atla
+                if coin in self.state.sl_cooldown:
+                    remaining = int((SL_COOLDOWN_SECS - (now - self.state.sl_cooldown[coin])) / 60)
+                    logger.debug("SL cooldown aktif, atlanıyor", coin=coin, kalan_dk=remaining)
+                    continue
                 result = await self._evaluate_coin(coin, symbol)
                 if result and result[0].is_actionable:
                     signals.append(result)
@@ -225,9 +238,12 @@ class BotEngine:
                     price_map[coin] = price
 
             if self.settings.paper_trading:
-                closed = self.engine.update_prices(price_map)
-                for coin in closed:
+                closed = self.engine.update_prices(price_map)  # {coin: status}
+                for coin, status in closed.items():
                     self.state.remove_position(coin)
+                    if status in ("CLOSED_SL", "CLOSED_CIRCUIT"):
+                        self.state.sl_cooldown[coin] = time.time()
+                        logger.info("SL cooldown başladı (45dk)", coin=coin, status=status)
             else:
                 await self._sync_live_positions()
                 # Monitor job içinde likidayon + fill kontrolü de çalışır

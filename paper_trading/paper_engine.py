@@ -174,13 +174,13 @@ class PaperEngine:
 
         return pos
 
-    def update_prices(self, price_map: dict[str, float]) -> list[str]:
+    def update_prices(self, price_map: dict[str, float]) -> dict[str, str]:
         """
         Pozisyonları günceller. SL/TP vurarsa kapatır.
         Trailing stop varsa SL'yi dinamik olarak günceller.
-        Dönen: kapanan coin listesi
+        Dönen: {coin: status} — kapanan pozisyonlar (CLOSED_SL, CLOSED_TP, CLOSED_CIRCUIT)
         """
-        closed = []
+        closed: dict[str, str] = {}
         for coin, pos in list(self.positions.items()):
             price = price_map.get(coin)
             if price is None:
@@ -246,13 +246,13 @@ class PaperEngine:
                 )
                 if tp2_triggered:
                     self._close_position(coin, pos, price, "CLOSED_TP")
-                    closed.append(coin)
+                    closed[coin] = "CLOSED_TP"
                     continue
 
             if sl_hit or emergency:
                 status = "CLOSED_SL" if sl_hit else "CLOSED_CIRCUIT"
                 self._close_position(coin, pos, price, status)
-                closed.append(coin)
+                closed[coin] = status
 
         return closed
 

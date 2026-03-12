@@ -27,7 +27,7 @@ class BotSettings(BaseSettings):
 
     # ── Risk ─────────────────────────────────────────────────────────────────
     daily_loss_limit_pct: float = Field(default=0.03, alias="DAILY_LOSS_LIMIT_PCT")
-    stop_loss_pct_from_entry: float = Field(default=0.015, alias="STOP_LOSS_PCT_FROM_ENTRY")
+    stop_loss_pct_from_entry: float = Field(default=0.020, alias="STOP_LOSS_PCT_FROM_ENTRY")
     max_position_size_pct: float = Field(default=0.10, alias="MAX_POSITION_SIZE_PCT")
 
     # ── Sinyal Eşikleri ───────────────────────────────────────────────────────

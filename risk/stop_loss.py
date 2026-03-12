@@ -46,7 +46,7 @@ class StopLossCalculator:
     def _resolve_stop_pct(self, entry_price: float, atr: Optional[float]) -> float:
         if atr is not None and entry_price > 0:
             atr_pct = atr / entry_price
-            # ATR × 1.5 ama min %0.5, max default_stop_pct
-            dynamic = max(atr_pct * 1.5, MIN_STOP_DISTANCE_PCT)
-            return min(dynamic, self.default_stop_pct)
+            # ATR × 1.5 kullan; default_stop_pct alt taban, %4 üst tavan
+            dynamic = max(atr_pct * 1.5, self.default_stop_pct)
+            return min(dynamic, 0.04)
         return self.default_stop_pct

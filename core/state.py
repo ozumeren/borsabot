@@ -32,6 +32,10 @@ class BotState:
     # Çoklu borsa piyasa verisi cache: coin → FundingSnapshot
     funding_cache: dict[str, Any] = field(default_factory=dict)
 
+    # SL sonrası cooldown: coin → timestamp (float, time.time())
+    # 45 dakika boyunca aynı coin yeniden açılmaz
+    sl_cooldown: dict[str, float] = field(default_factory=dict)
+
     started_at = utcnow()
 
     def add_position(self, coin: str, pos: Any) -> None:
