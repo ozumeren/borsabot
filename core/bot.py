@@ -17,7 +17,7 @@ from sentiment.rss_feeds import RSSFeedFetcher
 from sentiment.fear_greed import FearGreedFetcher
 from sentiment.gemini_analyzer import GeminiAnalyzer
 from signals.technical_signal import TechnicalSignalGenerator, Direction
-from signals.combiner import SignalCombiner
+from signals.combiner import SignalCombiner, FinalSignal
 from risk.position_sizer import PositionSizer
 from risk.stop_loss import StopLossCalculator
 from risk.circuit_breaker import CircuitBreaker
@@ -592,18 +592,88 @@ class BotEngine:
     # ── Fırsat Tarayıcı ───────────────────────────────────────────────────────
 
     async def scan_coins_for_report(self) -> list:
-        """Tüm coinleri tarar, actionable sinyalleri döndürür (skor sırasına göre)."""
+        """
+        Tüm coinleri tarar; is_actionable olsun ya da olmasın tüm sinyalleri toplar.
+        MTF filtresi atlanır (display-only tarama).
+        Eşik geçici olarak 0.42'ye düşürülür — gerçek trading için 0.55 geçerli.
+        Dönen: [(FinalSignal, IndicatorValues, mtf_ok: bool)] sorted by score
+        """
         symbols = self.market_data.scan_top_coins(self.settings.scan_top_n_coins)
-        SL_COOLDOWN_SECS = 45 * 60
-        now = time.time()
         results = []
-        for symbol in symbols:
-            coin = coin_from_symbol(symbol)
-            if coin in self.state.sl_cooldown and now - self.state.sl_cooldown[coin] < SL_COOLDOWN_SECS:
-                continue
-            result = await self._evaluate_coin(coin, symbol)
-            if result and result[0].is_actionable:
-                results.append(result)
+
+        # Geçici olarak eşiği düşür (tarama modunda daha fazla sonuç görünsün)
+        original_min = self.sig_combiner.min_combined_score
+        self.sig_combiner.min_combined_score = 0.42
+
+        try:
+            for symbol in symbols:
+                coin = coin_from_symbol(symbol)
+                try:
+                    df = self.market_data.fetch_ohlcv(symbol, self.settings.timeframe)
+                    if df is None:
+                        continue
+                    iv = self.tech_analyzer.compute(df)
+                    tech_signal = self.tech_sig_gen.generate(iv)
+                    if tech_signal.direction == Direction.NONE:
+                        continue
+
+                    # MTF kontrolü (sadece bilgi için, filtreleme değil)
+                    mtf_ok = True
+                    try:
+                        df_1h = self.market_data.fetch_ohlcv(symbol, "1h")
+                        if df_1h is not None and len(df_1h) >= 21:
+                            ema9  = ta.trend.EMAIndicator(df_1h["close"], window=9).ema_indicator().iloc[-1]
+                            ema21 = ta.trend.EMAIndicator(df_1h["close"], window=21).ema_indicator().iloc[-1]
+                            if tech_signal.direction == Direction.LONG and ema9 < ema21:
+                                mtf_ok = False
+                            elif tech_signal.direction == Direction.SHORT and ema9 > ema21:
+                                mtf_ok = False
+                    except Exception:
+                        pass
+
+                    real_price = self.market_data.get_current_price(symbol)
+                    entry_price = real_price if real_price else iv.close
+                    cp_news    = self.cryptopanic.fetch_news(coin, limit=5)
+                    cp_score   = self.cryptopanic.calculate_sentiment_score(cp_news)
+                    gemini_cached = self.state.gemini_cache.get(coin)
+                    if gemini_cached:
+                        cp_score = 0.6 * gemini_cached[0] + 0.4 * cp_score
+                    fg_index     = self.state.fear_greed_index
+                    funding_snap = self.state.funding_cache.get(coin)
+                    market_signal = funding_snap.combined_market_signal if funding_snap else 0.0
+                    dyn_leverage  = calculate_leverage(
+                        combined_score=tech_signal.score, adx=iv.adx,
+                        atr=iv.atr, price=entry_price,
+                        base_leverage=self.settings.leverage,
+                        max_leverage=self.settings.max_leverage,
+                    )
+                    final_signal = self.sig_combiner.combine(
+                        technical=tech_signal, cryptopanic_score=cp_score,
+                        fear_greed_index=fg_index, market_signal=market_signal,
+                        coin=coin, entry_price=entry_price, atr=iv.atr,
+                        leverage=dyn_leverage,
+                    )
+                    # combined_score var ama direction NONE olabilir → teknik yönü koru
+                    if final_signal.direction == Direction.NONE and final_signal.combined_score >= 0.42:
+                        final_signal = FinalSignal(
+                            direction=tech_signal.direction,
+                            combined_score=final_signal.combined_score,
+                            technical_score=final_signal.technical_score,
+                            sentiment_score=final_signal.sentiment_score,
+                            market_score=final_signal.market_score,
+                            coin=coin,
+                            entry_price=entry_price,
+                            reasons=final_signal.reasons or tech_signal.reasons,
+                            atr=iv.atr,
+                            leverage=dyn_leverage,
+                        )
+                    if final_signal.combined_score >= 0.42:
+                        results.append((final_signal, iv, mtf_ok))
+                except Exception:
+                    continue
+        finally:
+            self.sig_combiner.min_combined_score = original_min
+
         results.sort(key=lambda r: r[0].combined_score, reverse=True)
         return results
 
@@ -614,36 +684,49 @@ class BotEngine:
         if not results:
             return (
                 f"📊 <b>PİYASA TARAMASI</b> — {now_str}\n\n"
-                "Şu an güçlü sinyal bulunamadı."
+                "Şu an işlem yapılabilir sinyal bulunamadı.\n"
+                "Piyasa yatay veya tüm coinler eşiğin altında."
             )
+        trading_threshold = self.settings.min_combined_score
         lines = [f"📊 <b>PİYASA TARAMASI — Top {min(5, len(results))} Fırsat</b>\n{now_str}\n"]
-        for i, (signal, iv) in enumerate(results[:5], 1):
+        for i, item in enumerate(results[:5], 1):
+            signal, iv, mtf_ok = item
             direction = "LONG" if signal.direction.value == "long" else "SHORT"
             dir_emoji = "🟢" if direction == "LONG" else "🔴"
             score = self._display_score(signal)
             score_str = f"+{score}" if score > 0 else str(score)
-            sl = self.stop_calc.calculate_stop_loss(signal.direction, signal.entry_price, signal.atr)
+            sl  = self.stop_calc.calculate_stop_loss(signal.direction, signal.entry_price, signal.atr)
             tp1 = self.stop_calc.calculate_take_profit(signal.direction, signal.entry_price, sl)
             reasons = self._humanize_reasons(signal, iv)
             reason = reasons[0] if reasons else ""
+
+            # Durumu belirt
+            if signal.combined_score >= trading_threshold and mtf_ok:
+                status = "✅ İşlem açılabilir"
+            elif signal.combined_score >= trading_threshold and not mtf_ok:
+                status = "⚠️ Skor yeterli ama 1s trend ters"
+            else:
+                status = f"🔸 Skor düşük ({signal.combined_score:.2f} < {trading_threshold:.2f})"
+
             lines.append(
                 f"{i}. {dir_emoji} <b>{signal.coin}/USDT — {direction}</b> ({score_str})\n"
                 f"   Giriş: {format_usdt(signal.entry_price)} | SL: {format_usdt(sl)} | TP: {format_usdt(tp1)}\n"
-                f"   {reason}"
+                f"   {reason}\n"
+                f"   {status}"
             )
-        lines.append("\n💡 Girmek için: <code>/ac BTC</code> (coin adını yaz)")
+        lines.append("\n💡 Girmek için: <code>/ac BTC</code>")
         return "\n\n".join(lines)
 
     async def _open_coin_by_command(self, coin: str) -> None:
         """Belirtilen coin için pozisyon açar. Önce cache'e bakar, yoksa fresh eval yapar."""
         from utils.helpers import format_usdt
-        # Cache'den bul
+        # Cache'den bul (3-tuple: signal, iv, mtf_ok)
         cached = next(
             (r for r in self.state.scan_results if r[0].coin == coin),
             None,
         )
         if cached:
-            signal, iv = cached
+            signal, iv, _mtf_ok = cached
         else:
             # Fresh evaluate
             symbol = f"{coin}/USDT:USDT"
