@@ -61,6 +61,15 @@ class BotScheduler:
             max_instances=1,
         )
 
+        # BTC piyasa rejimi — 30 dakika
+        self.scheduler.add_job(
+            bot.update_btc_regime,
+            IntervalTrigger(minutes=30),
+            id="btc_regime",
+            max_instances=1,
+            misfire_grace_time=60,
+        )
+
         # Çoklu borsa funding verisi — 5 dakika
         self.scheduler.add_job(
             bot.fetch_funding_data,

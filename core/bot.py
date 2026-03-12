@@ -135,6 +135,9 @@ class BotEngine:
             f"Portföy: ${portfolio:,.2f}"
         )
 
+        # Bot başlar başlamaz BTC rejimini belirle
+        await self.update_btc_regime()
+
         # Restart sonrası açık pozisyonları DB'den geri yükle
         if self.settings.paper_trading:
             restored = self.engine.restore_from_db()
@@ -155,6 +158,12 @@ class BotEngine:
     async def run_signal_loop(self) -> None:
         """Ana sinyal döngüsü — 60 saniyede bir çalışır."""
         try:
+            # Ardışık kayıp sonrası duraklama kontrolü
+            if self.state.loss_pause_until > time.time():
+                remaining = int((self.state.loss_pause_until - time.time()) / 60)
+                logger.info("Kayıp duraklaması aktif, sinyal döngüsü atlanıyor", kalan_dk=remaining)
+                return
+
             symbols = self.market_data.scan_top_coins(self.settings.scan_top_n_coins)
             if not symbols:
                 return
@@ -243,7 +252,23 @@ class BotEngine:
                     self.state.remove_position(coin)
                     if status in ("CLOSED_SL", "CLOSED_CIRCUIT"):
                         self.state.sl_cooldown[coin] = time.time()
-                        logger.info("SL cooldown başladı (45dk)", coin=coin, status=status)
+                        self.state.consecutive_losses += 1
+                        logger.info("SL cooldown başladı (45dk)", coin=coin, status=status,
+                                    consecutive=self.state.consecutive_losses)
+                        # 3 ardışık SL → 2 saat dur
+                        if self.state.consecutive_losses >= 3:
+                            pause_hours = 2
+                            self.state.loss_pause_until = time.time() + pause_hours * 3600
+                            self.state.consecutive_losses = 0
+                            logger.warning("3 ardışık SL — işlemler 2 saat durduruldu")
+                            if self.notifier:
+                                self.notifier.send(
+                                    "⛔ <b>3 ardışık stop loss!</b>\n"
+                                    "Bot 2 saat boyunca yeni işlem açmayacak.\n"
+                                    "Piyasa koşulları değerlendirilmeli."
+                                )
+                    elif status in ("CLOSED_TP", "CLOSED_TP1"):
+                        self.state.consecutive_losses = 0  # kazanışta sıfırla
             else:
                 await self._sync_live_positions()
                 # Monitor job içinde likidayon + fill kontrolü de çalışır
@@ -283,6 +308,41 @@ class BotEngine:
             self.state.fear_greed_index = self.fear_greed.fetch()
         except Exception as e:
             logger.error("Fear & Greed hatası", error=str(e))
+
+    async def update_btc_regime(self) -> None:
+        """BTC 4h trendine göre piyasa rejimini günceller — 30 dakikada bir."""
+        try:
+            df = self.market_data.fetch_ohlcv("BTC/USDT:USDT", "4h")
+            if df is None or len(df) < 50:
+                return
+            ema9  = ta.trend.EMAIndicator(df["close"], window=9).ema_indicator().iloc[-1]
+            ema21 = ta.trend.EMAIndicator(df["close"], window=21).ema_indicator().iloc[-1]
+            ema50 = ta.trend.EMAIndicator(df["close"], window=50).ema_indicator().iloc[-1]
+            price = df["close"].iloc[-1]
+            # Güçlü bull: fiyat > EMA9 > EMA21 > EMA50
+            # Güçlü bear: fiyat < EMA9 < EMA21 < EMA50
+            if price > ema9 > ema21 > ema50:
+                regime = "bull"
+            elif price < ema9 < ema21 < ema50:
+                regime = "bear"
+            else:
+                regime = "neutral"
+            old = self.state.btc_regime
+            self.state.btc_regime = regime
+            if old != regime:
+                logger.info("BTC rejimi değişti", old=old, new=regime,
+                            ema9=f"{ema9:.0f}", ema21=f"{ema21:.0f}", ema50=f"{ema50:.0f}")
+                if self.notifier:
+                    emoji = "🟢" if regime == "bull" else ("🔴" if regime == "bear" else "🟡")
+                    self.notifier.send(
+                        f"{emoji} <b>BTC Piyasa Rejimi: {regime.upper()}</b>\n"
+                        f"EMA9={ema9:.0f} | EMA21={ema21:.0f} | EMA50={ema50:.0f}\n"
+                        + ("Sadece SHORT işlemlere izin veriliyor." if regime == "bear"
+                           else "Sadece LONG işlemlere izin veriliyor." if regime == "bull"
+                           else "Her iki yön açık.")
+                    )
+        except Exception as e:
+            logger.error("BTC rejim güncelleme hatası", error=str(e))
 
     async def fetch_funding_data(self) -> None:
         """
@@ -500,7 +560,7 @@ class BotEngine:
         if tech_signal.direction == Direction.NONE:
             return None
 
-        # ── MTF Filtresi: 1h EMA9/EMA21 onayı ───────────────────────────────
+        # ── MTF Filtresi: 1h VE 4h EMA9/EMA21 onayı ─────────────────────────
         try:
             df_1h = self.market_data.fetch_ohlcv(symbol, "1h")
             if df_1h is not None and len(df_1h) >= 21:
@@ -513,7 +573,32 @@ class BotEngine:
                     logger.debug("MTF 1h filtre: SHORT sinyal iptal (1h bull)", coin=coin)
                     return None
         except Exception as e:
-            logger.debug("MTF fetch hatası, atlanıyor", coin=coin, error=str(e))
+            logger.debug("MTF 1h fetch hatası", coin=coin, error=str(e))
+
+        try:
+            df_4h = self.market_data.fetch_ohlcv(symbol, "4h")
+            if df_4h is not None and len(df_4h) >= 21:
+                ema9_4h  = ta.trend.EMAIndicator(df_4h["close"], window=9).ema_indicator().iloc[-1]
+                ema21_4h = ta.trend.EMAIndicator(df_4h["close"], window=21).ema_indicator().iloc[-1]
+                if tech_signal.direction == Direction.LONG and ema9_4h < ema21_4h:
+                    logger.debug("MTF 4h filtre: LONG sinyal iptal (4h bear)", coin=coin)
+                    return None
+                if tech_signal.direction == Direction.SHORT and ema9_4h > ema21_4h:
+                    logger.debug("MTF 4h filtre: SHORT sinyal iptal (4h bull)", coin=coin)
+                    return None
+        except Exception as e:
+            logger.debug("MTF 4h fetch hatası", coin=coin, error=str(e))
+
+        # ── BTC Piyasa Rejimi Filtresi ────────────────────────────────────────
+        # BTC 4h trend ile çelişen sinyalleri engelle (tüm coinler için)
+        if coin != "BTC":
+            btc_regime = self.state.btc_regime  # "bull" | "bear" | "neutral"
+            if btc_regime == "bear" and tech_signal.direction == Direction.LONG:
+                logger.debug("BTC rejimi BEAR, LONG sinyal engellendi", coin=coin)
+                return None
+            if btc_regime == "bull" and tech_signal.direction == Direction.SHORT:
+                logger.debug("BTC rejimi BULL, SHORT sinyal engellendi", coin=coin)
+                return None
 
         # Gerçek piyasa anlık fiyatı
         real_price = self.market_data.get_current_price(symbol)

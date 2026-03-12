@@ -32,7 +32,7 @@ class BotSettings(BaseSettings):
 
     # ── Sinyal Eşikleri ───────────────────────────────────────────────────────
     min_technical_score: float = Field(default=0.6, alias="MIN_TECHNICAL_SCORE")
-    min_combined_score: float = Field(default=0.55, alias="MIN_COMBINED_SCORE")
+    min_combined_score: float = Field(default=0.65, alias="MIN_COMBINED_SCORE")
 
     # ── Sentiment API'ları ────────────────────────────────────────────────────
     cryptopanic_api_key: str = Field(default="", alias="CRYPTOPANIC_API_KEY")

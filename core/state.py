@@ -39,6 +39,13 @@ class BotState:
     # /tara sonuçları: [(FinalSignal, IndicatorValues)] — /ac için kullanılır
     scan_results: list = field(default_factory=list)
 
+    # BTC 4h piyasa rejimi: "bull" | "bear" | "neutral"
+    btc_regime: str = "neutral"
+
+    # Ardışık kayıp sayacı — 3 üst üste SL → 2 saat duraklama
+    consecutive_losses: int = 0
+    loss_pause_until: float = 0.0  # time.time() timestamp
+
     started_at = utcnow()
 
     def add_position(self, coin: str, pos: Any) -> None:
