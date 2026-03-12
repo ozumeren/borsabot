@@ -36,6 +36,9 @@ class BotState:
     # 45 dakika boyunca aynı coin yeniden açılmaz
     sl_cooldown: dict[str, float] = field(default_factory=dict)
 
+    # /tara sonuçları: [(FinalSignal, IndicatorValues)] — /ac için kullanılır
+    scan_results: list = field(default_factory=list)
+
     started_at = utcnow()
 
     def add_position(self, coin: str, pos: Any) -> None:

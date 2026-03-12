@@ -333,6 +333,8 @@ class TelegramNotifier:
             "🤖 <b>Kullanılabilir Komutlar</b>\n\n"
             "/durum — Portföy durumu\n"
             "/bakiye — OKX bakiyesi\n"
+            "/tara — Piyasayı tara, en iyi 5 fırsatı listele\n"
+            "/ac BTC — BTC için analiz yap ve pozisyon aç\n"
             "/kapat ETH — ETH pozisyonunu kapat\n"
             "/hepsiniKapat — Tüm pozisyonları kapat\n"
             "/durdur — Yeni işlem açmayı durdur\n"
@@ -363,6 +365,21 @@ class TelegramNotifier:
                     if cmd in ("/durum", "/status"):
                         logger.info("Telegram /durum komutu")
                         asyncio.create_task(asyncio.to_thread(self.send_portfolio_status))
+
+                    elif cmd == "/tara":
+                        logger.info("Telegram /tara komutu")
+                        if self._command_handler:
+                            asyncio.create_task(self._command_handler("tara"))
+
+                    elif cmd.startswith("/ac"):
+                        parts = raw.split()
+                        if len(parts) >= 2:
+                            coin = parts[1].upper().replace("USDT", "").strip()
+                            logger.info("Telegram /ac komutu", coin=coin)
+                            if self._command_handler:
+                                asyncio.create_task(self._command_handler("ac", coin=coin))
+                        else:
+                            self.send("⚠️ Kullanım: /ac BTC")
 
                     elif cmd == "/bakiye":
                         logger.info("Telegram /bakiye komutu")

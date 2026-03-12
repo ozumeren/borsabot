@@ -591,6 +591,107 @@ class BotEngine:
 
     # ── Fırsat Tarayıcı ───────────────────────────────────────────────────────
 
+    async def scan_coins_for_report(self) -> list:
+        """Tüm coinleri tarar, actionable sinyalleri döndürür (skor sırasına göre)."""
+        symbols = self.market_data.scan_top_coins(self.settings.scan_top_n_coins)
+        SL_COOLDOWN_SECS = 45 * 60
+        now = time.time()
+        results = []
+        for symbol in symbols:
+            coin = coin_from_symbol(symbol)
+            if coin in self.state.sl_cooldown and now - self.state.sl_cooldown[coin] < SL_COOLDOWN_SECS:
+                continue
+            result = await self._evaluate_coin(coin, symbol)
+            if result and result[0].is_actionable:
+                results.append(result)
+        results.sort(key=lambda r: r[0].combined_score, reverse=True)
+        return results
+
+    def _format_scan_results(self, results: list) -> str:
+        """Top 5 fırsatı Telegram mesajı olarak formatlar."""
+        from utils.helpers import format_usdt
+        now_str = datetime.datetime.utcnow().strftime("%d.%m.%Y %H:%M UTC")
+        if not results:
+            return (
+                f"📊 <b>PİYASA TARAMASI</b> — {now_str}\n\n"
+                "Şu an güçlü sinyal bulunamadı."
+            )
+        lines = [f"📊 <b>PİYASA TARAMASI — Top {min(5, len(results))} Fırsat</b>\n{now_str}\n"]
+        for i, (signal, iv) in enumerate(results[:5], 1):
+            direction = "LONG" if signal.direction.value == "long" else "SHORT"
+            dir_emoji = "🟢" if direction == "LONG" else "🔴"
+            score = self._display_score(signal)
+            score_str = f"+{score}" if score > 0 else str(score)
+            sl = self.stop_calc.calculate_stop_loss(signal.direction, signal.entry_price, signal.atr)
+            tp1 = self.stop_calc.calculate_take_profit(signal.direction, signal.entry_price, sl)
+            reasons = self._humanize_reasons(signal, iv)
+            reason = reasons[0] if reasons else ""
+            lines.append(
+                f"{i}. {dir_emoji} <b>{signal.coin}/USDT — {direction}</b> ({score_str})\n"
+                f"   Giriş: {format_usdt(signal.entry_price)} | SL: {format_usdt(sl)} | TP: {format_usdt(tp1)}\n"
+                f"   {reason}"
+            )
+        lines.append("\n💡 Girmek için: <code>/ac BTC</code> (coin adını yaz)")
+        return "\n\n".join(lines)
+
+    async def _open_coin_by_command(self, coin: str) -> None:
+        """Belirtilen coin için pozisyon açar. Önce cache'e bakar, yoksa fresh eval yapar."""
+        from utils.helpers import format_usdt
+        # Cache'den bul
+        cached = next(
+            (r for r in self.state.scan_results if r[0].coin == coin),
+            None,
+        )
+        if cached:
+            signal, iv = cached
+        else:
+            # Fresh evaluate
+            symbol = f"{coin}/USDT:USDT"
+            result = await self._evaluate_coin(coin, symbol)
+            if not result:
+                self.notifier.send(f"⚠️ <b>{coin}</b>: fiyat verisi alınamadı.")
+                return
+            signal, iv = result
+
+        if not signal.is_actionable:
+            direction = "LONG" if signal.direction.value == "long" else "SHORT"
+            score = self._display_score(signal)
+            self.notifier.send(
+                f"⚠️ <b>{coin}</b> sinyali yeterince güçlü değil.\n"
+                f"Yön: {direction} | Skor: {score} | Eşik: {self.settings.min_combined_score:.2f}"
+            )
+            return
+
+        # Mevcut pozisyon kontrolü
+        open_coins = set(self.engine.positions.keys()) if self.settings.paper_trading else set(self.state.open_positions.keys())
+        if coin in open_coins:
+            self.notifier.send(f"⚠️ <b>{coin}</b> için zaten açık pozisyon var.")
+            return
+
+        # Circuit breaker
+        allowed, reason = self.circuit_breaker.is_trading_allowed(len(open_coins))
+        if not allowed:
+            self.notifier.send(f"🔴 İşlem açılamaz: {reason}")
+            return
+
+        # Pozisyon aç
+        portfolio_val = self.engine.portfolio_value if self.settings.paper_trading else self.client.get_portfolio_value()
+        self.state.portfolio_value = portfolio_val
+
+        if self.settings.paper_trading:
+            pos = self.engine.open_position(signal, portfolio_val)
+            if pos:
+                self.state.add_position(coin, pos)
+                direction = "LONG" if signal.direction.value == "long" else "SHORT"
+                self.notifier.send(
+                    f"✅ <b>{coin}</b> {direction} pozisyonu açıldı.\n"
+                    f"Giriş: {format_usdt(pos.entry_price)} | SL: {format_usdt(pos.stop_loss_price)} | TP1: {format_usdt(pos.take_profit_price)}"
+                )
+            else:
+                self.notifier.send(f"❌ <b>{coin}</b> pozisyonu açılamadı (circuit breaker veya limit).")
+        else:
+            self.engine.execute(signal, portfolio_val)
+
     async def send_opportunity_scan(self) -> None:
         """Her 15 dakikada en iyi piyasa fırsatını Telegram'a gönderir."""
         try:
@@ -734,6 +835,27 @@ class BotEngine:
         elif command == "baslat":
             self.circuit_breaker.is_halted = False
             self.notifier.send("🟢 <b>Bot devam ediyor.</b> Yeni işlemler açılabilir.")
+
+        elif command == "tara":
+            self.notifier.send("🔍 Piyasa taranıyor, lütfen bekleyin...")
+            try:
+                results = await self.scan_coins_for_report()
+                self.state.scan_results = results
+                msg = self._format_scan_results(results)
+                self.notifier.send(msg)
+            except Exception as e:
+                self.notifier.send(f"❌ Tarama başarısız: {e}")
+
+        elif command == "ac":
+            coin = kwargs.get("coin", "").upper().replace("USDT", "").strip()
+            if not coin:
+                self.notifier.send("⚠️ Kullanım: /ac BTC")
+                return
+            self.notifier.send(f"🔍 <b>{coin}</b> analiz ediliyor...")
+            try:
+                await self._open_coin_by_command(coin)
+            except Exception as e:
+                self.notifier.send(f"❌ {coin} işlemi açılamadı: {e}")
 
         elif command == "bakiye":
             try:
