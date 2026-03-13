@@ -203,7 +203,8 @@ class TelegramNotifier:
         init_db()
         with get_session() as session:
             open_trades = session.query(Trade).filter(Trade.status == "OPEN").all()
-            now_utc = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            now_cet = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+            now_utc = now_cet.strftime("%Y-%m-%d %H:%M CET")
             lines = [f"🤖 <b>PORTFÖY DURUMU</b>  <i>{now_utc}</i>\n"]
 
             lines.append(f"📂 <b>Açık Pozisyonlar ({len(open_trades)})</b>")
