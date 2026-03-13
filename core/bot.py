@@ -625,19 +625,6 @@ class BotEngine:
         funding_snap = self.state.funding_cache.get(coin)
         market_signal = funding_snap.combined_market_signal if funding_snap else 0.0
 
-        # ── Dinamik kaldıraç hesapla ─────────────────────────────────────────
-        # combine() öncesinde çağrılır; combine() sonucuna göre tekrar hesap gerekmez
-        # (combine() çağrısından önce tahmini skor bilinmiyor — basit yaklaşım olarak
-        #  önce tahmini combine, sonra leverage hesapla yerine: teknik skoru kullan)
-        dyn_leverage = calculate_leverage(
-            combined_score=tech_signal.score,
-            adx=iv.adx,
-            atr=iv.atr,
-            price=entry_price,
-            base_leverage=self.settings.leverage,
-            max_leverage=self.settings.max_leverage,
-        )
-
         final_signal = self.sig_combiner.combine(
             technical=tech_signal,
             cryptopanic_score=cp_score,
@@ -646,10 +633,10 @@ class BotEngine:
             coin=coin,
             entry_price=entry_price,
             atr=iv.atr,
-            leverage=dyn_leverage,
+            leverage=self.settings.leverage,  # varsayılan; aşağıda gerçek değerle güncellenir
         )
 
-        # Combine sonrası asıl skora göre kaldıracı güncelle
+        # Gerçek combined_score ile kaldıracı hesapla ve güncelle
         if final_signal.is_actionable:
             final_signal.leverage = calculate_leverage(
                 combined_score=final_signal.combined_score,

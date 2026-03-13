@@ -70,20 +70,37 @@ class TechnicalSignalGenerator:
             short_reasons.append(f"RSI yüksek: {iv.rsi:.1f}")
 
         # ── MACD histogram crossover (0.20) ───────────────────────────────────
-        if iv.macd_hist > 0 and iv.macd_line > iv.macd_signal:
+        # Gerçek crossover: önceki mum negatif, şimdiki pozitif (veya tersi)
+        if iv.macd_hist_prev <= 0 and iv.macd_hist > 0:
             long_score += 0.20; long_count += 1
             long_reasons.append("MACD bullish crossover")
-        if iv.macd_hist < 0 and iv.macd_line < iv.macd_signal:
+        elif iv.macd_hist > 0:
+            long_score += 0.08   # momentum devam ediyor ama crossover değil
+            long_reasons.append(f"MACD pozitif momentum ({iv.macd_hist:.4f})")
+
+        if iv.macd_hist_prev >= 0 and iv.macd_hist < 0:
             short_score += 0.20; short_count += 1
             short_reasons.append("MACD bearish crossover")
+        elif iv.macd_hist < 0:
+            short_score += 0.08
+            short_reasons.append(f"MACD negatif momentum ({iv.macd_hist:.4f})")
 
         # ── EMA trend (0.20) ──────────────────────────────────────────────────
+        ema_spread = abs(iv.ema_short - iv.ema_long) / iv.ema_long if iv.ema_long > 0 else 0.0
         if iv.ema_short > iv.ema_long:
-            long_score  += 0.20; long_count += 1
-            long_reasons.append(f"EMA{EMA_SHORT}>{EMA_LONG} yükselen trend")
+            if ema_spread >= 0.003:  # EMA'lar ayrışmış → güçlü trend
+                long_score  += 0.20; long_count += 1
+                long_reasons.append(f"EMA{EMA_SHORT}>{EMA_LONG} yükselen trend ({ema_spread:.2%})")
+            else:  # EMA'lar çok yakın → zayıf trend, kısmi puan
+                long_score  += 0.08
+                long_reasons.append(f"EMA{EMA_SHORT}>{EMA_LONG} (zayıf spread: {ema_spread:.2%})")
         else:
-            short_score += 0.20; short_count += 1
-            short_reasons.append(f"EMA{EMA_SHORT}<{EMA_LONG} düşen trend")
+            if ema_spread >= 0.003:
+                short_score += 0.20; short_count += 1
+                short_reasons.append(f"EMA{EMA_SHORT}<{EMA_LONG} düşen trend ({ema_spread:.2%})")
+            else:
+                short_score += 0.08
+                short_reasons.append(f"EMA{EMA_SHORT}<{EMA_LONG} (zayıf spread: {ema_spread:.2%})")
 
         # ── Bollinger Bands (0.20) ────────────────────────────────────────────
         bb_long = bb_short = False

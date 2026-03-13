@@ -211,6 +211,7 @@ class TelegramNotifier:
                 lines.append("  — Açık pozisyon yok")
             else:
                 total_margin = 0.0
+                total_unrealized = 0.0
                 for t in open_trades:
                     yön = "🟢 LONG" if t.direction == "long" else "🔴 SHORT"
                     dur = datetime.datetime.utcnow() - t.opened_at
@@ -225,11 +226,12 @@ class TelegramNotifier:
                         notional = t.margin_used * t.leverage
                         fee = notional * 0.002
                         unreal = chg * notional - fee
+                        total_unrealized += unreal
                         sign = "+" if unreal >= 0 else ""
                         price_line = (
                             f"\n  Anlık: <b>{format_usdt(current)}</b> "
                             f"({'+' if chg>=0 else ''}{chg*100:.2f}%)  "
-                            f"Net PnL: <b>{sign}{format_usdt(unreal)}</b>"
+                            f"Gerçekleşmemiş: <b>{sign}{format_usdt(unreal)}</b>"
                         )
                     lines.append(
                         f"  <b>{t.coin}</b> {yön} {t.leverage}x | Giriş: {format_usdt(t.entry_price)}"
@@ -238,22 +240,45 @@ class TelegramNotifier:
                         f"  Margin: {format_usdt(t.margin_used)} | Skor: {t.combined_score:.2f} | {h}s {m}dk"
                     )
                     total_margin += t.margin_used
-                lines.append(f"  Kullanılan margin: <b>{format_usdt(total_margin)}</b>")
+                unreal_sign = "+" if total_unrealized >= 0 else ""
+                unreal_emoji = "📈" if total_unrealized >= 0 else "📉"
+                lines.append(
+                    f"  Kullanılan margin: <b>{format_usdt(total_margin)}</b>\n"
+                    f"  {unreal_emoji} Toplam Gerçekleşmemiş PnL: <b>{unreal_sign}{format_usdt(total_unrealized)}</b>"
+                )
 
             today = datetime.date.today().isoformat()
             stats = session.query(DailyStats).filter_by(date=today).first()
+
+            # Bugünkü realize edilmiş PnL'i Trade tablosundan da çek (DailyStats yoksa bile)
+            today_dt = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_realized = session.query(func.sum(Trade.pnl_usdt)).filter(
+                Trade.status != "OPEN",
+                Trade.closed_at >= today_dt,
+            ).scalar() or 0.0
+            today_trade_count = session.query(Trade).filter(
+                Trade.status != "OPEN",
+                Trade.closed_at >= today_dt,
+            ).count()
+            today_wins = session.query(Trade).filter(
+                Trade.status != "OPEN",
+                Trade.closed_at >= today_dt,
+                Trade.pnl_usdt > 0,
+            ).count()
+            today_losses = today_trade_count - today_wins
+
             lines.append(f"\n📊 <b>Bugün ({today})</b>")
-            if not stats or not stats.total_trades:
+            if not today_trade_count:
                 lines.append("  — Henüz kapalı işlem yok")
             else:
-                total = stats.total_trades
-                wr = (stats.winning_trades / total * 100) if total else 0
-                pnl = stats.total_pnl_usdt or 0.0
-                pnl_sign = "+" if pnl >= 0 else ""
-                cb = "🔴 Ateşlendi" if stats.circuit_breaker_fired else "🟢 Aktif"
+                wr = (today_wins / today_trade_count * 100) if today_trade_count else 0
+                real_sign = "+" if today_realized >= 0 else ""
+                real_emoji = "📈" if today_realized >= 0 else "📉"
+                cb = "🔴 Ateşlendi" if (stats and stats.circuit_breaker_fired) else "🟢 Aktif"
                 lines.append(
-                    f"  İşlem: {total} | ✅ {stats.winning_trades} / ❌ {stats.losing_trades}\n"
-                    f"  Kazanma: {wr:.1f}% | PnL: <b>{pnl_sign}{format_usdt(pnl)}</b>\n"
+                    f"  İşlem: {today_trade_count} | ✅ {today_wins} / ❌ {today_losses}\n"
+                    f"  Kazanma: {wr:.1f}%\n"
+                    f"  {real_emoji} Realize PnL: <b>{real_sign}{format_usdt(today_realized)}</b>\n"
                     f"  Circuit Breaker: {cb}"
                 )
 
@@ -263,10 +288,11 @@ class TelegramNotifier:
             total_pnl_all = session.query(func.sum(Trade.pnl_usdt)).filter(Trade.status != "OPEN").scalar() or 0.0
             wr_all = (wins_all / total_all * 100) if total_all else 0
             pnl_sign = "+" if total_pnl_all >= 0 else ""
+            pnl_emoji = "📈" if total_pnl_all >= 0 else "📉"
             lines.append(
                 f"\n📈 <b>Tüm Zamanlar</b>\n"
                 f"  Kapalı: {total_all} | Kazanma: {wr_all:.1f}%\n"
-                f"  Toplam PnL: <b>{pnl_sign}{format_usdt(total_pnl_all)}</b>"
+                f"  {pnl_emoji} Toplam Realize PnL: <b>{pnl_sign}{format_usdt(total_pnl_all)}</b>"
             )
 
         return "\n".join(lines)

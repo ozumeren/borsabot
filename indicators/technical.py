@@ -15,6 +15,7 @@ class IndicatorValues:
     macd_line: float
     macd_signal: float
     macd_hist: float
+    macd_hist_prev: float   # önceki mumun histogramı — gerçek crossover tespiti için
     ema_short: float
     ema_long: float
     sma_long: float
@@ -54,9 +55,11 @@ class TechnicalAnalyzer:
 
         # MACD
         macd_obj = ta.trend.MACD(close, MACD_FAST, MACD_SLOW, MACD_SIGNAL_PERIOD)
-        macd_line   = macd_obj.macd().iloc[-1]
-        macd_signal = macd_obj.macd_signal().iloc[-1]
-        macd_hist   = macd_obj.macd_diff().iloc[-1]
+        macd_line      = macd_obj.macd().iloc[-1]
+        macd_signal    = macd_obj.macd_signal().iloc[-1]
+        _macd_hist_ser = macd_obj.macd_diff()
+        macd_hist      = _macd_hist_ser.iloc[-1]
+        macd_hist_prev = _macd_hist_ser.iloc[-2] if len(_macd_hist_ser) >= 2 else 0.0
 
         # EMA / SMA
         ema_short = ta.trend.EMAIndicator(close, window=EMA_SHORT).ema_indicator().iloc[-1]
@@ -88,6 +91,7 @@ class TechnicalAnalyzer:
             macd_line=float(macd_line),
             macd_signal=float(macd_signal),
             macd_hist=float(macd_hist),
+            macd_hist_prev=float(macd_hist_prev) if not pd.isna(macd_hist_prev) else 0.0,
             ema_short=float(ema_short),
             ema_long=float(ema_long),
             sma_long=float(sma_long),

@@ -59,7 +59,7 @@ class PositionSizer:
         quantity = notional / entry_price
 
         stop_pct = abs(entry_price - stop_loss_price) / entry_price
-        risk_amount = margin * stop_pct * self.leverage
+        risk_amount = margin * stop_pct * lev
 
         return PositionSize(
             quantity=quantity,

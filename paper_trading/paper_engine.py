@@ -130,7 +130,7 @@ class PaperEngine:
             take_profit_price=tp_price,
             quantity=sizing.quantity,
             margin_used=sizing.margin_required,
-            leverage=self.position_sizer.leverage,
+            leverage=signal.leverage,
             is_paper=True,
             technical_score=signal.technical_score,
             sentiment_score=signal.sentiment_score,

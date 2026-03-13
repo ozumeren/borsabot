@@ -96,7 +96,8 @@ class MarketDataFetcher:
             logger.debug("Yetersiz mum sayısı", symbol=symbol, count=len(df))
             return None
 
-        self._cache.set(cache_key, df, ttl=60)  # 1 dakika cache
+        _TF_TTL = {"1m": 30, "3m": 60, "5m": 120, "15m": 300, "30m": 600, "1h": 900, "4h": 1800, "1d": 3600}
+        self._cache.set(cache_key, df, ttl=_TF_TTL.get(timeframe, 60))
         return df
 
     def get_current_price(self, symbol: str) -> Optional[float]:
