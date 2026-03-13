@@ -337,18 +337,20 @@ class BotEngine:
                 regime = "neutral"
             old = self.state.btc_regime
             self.state.btc_regime = regime
-            if old != regime:
+            changed = old != regime
+            if changed:
                 logger.info("BTC rejimi değişti", old=old, new=regime,
                             ema9=f"{ema9:.0f}", ema21=f"{ema21:.0f}", ema50=f"{ema50:.0f}")
-                if self.notifier:
-                    emoji = "🟢" if regime == "bull" else ("🔴" if regime == "bear" else "🟡")
-                    self.notifier.send(
-                        f"{emoji} <b>BTC Piyasa Rejimi: {regime.upper()}</b>\n"
-                        f"EMA9={ema9:.0f} | EMA21={ema21:.0f} | EMA50={ema50:.0f}\n"
-                        + ("Sadece SHORT işlemlere izin veriliyor." if regime == "bear"
-                           else "Sadece LONG işlemlere izin veriliyor." if regime == "bull"
-                           else "Her iki yön açık.")
-                    )
+            if self.notifier:
+                emoji = "🟢" if regime == "bull" else ("🔴" if regime == "bear" else "🟡")
+                change_tag = " <i>(değişti)</i>" if changed else ""
+                self.notifier.send(
+                    f"{emoji} <b>BTC Piyasa Rejimi: {regime.upper()}</b>{change_tag}\n"
+                    f"EMA9={ema9:.0f} | EMA21={ema21:.0f} | EMA50={ema50:.0f}\n"
+                    + ("Sadece SHORT işlemlere izin veriliyor." if regime == "bear"
+                       else "Sadece LONG işlemlere izin veriliyor." if regime == "bull"
+                       else "Her iki yön açık.")
+                )
         except Exception as e:
             logger.error("BTC rejim güncelleme hatası", error=str(e))
 
