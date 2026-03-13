@@ -346,10 +346,7 @@ class BotEngine:
                 change_tag = " <i>(değişti)</i>" if changed else ""
                 self.notifier.send(
                     f"{emoji} <b>BTC Piyasa Rejimi: {regime.upper()}</b>{change_tag}\n"
-                    f"EMA9={ema9:.0f} | EMA21={ema21:.0f} | EMA50={ema50:.0f}\n"
-                    + ("Sadece SHORT işlemlere izin veriliyor." if regime == "bear"
-                       else "Sadece LONG işlemlere izin veriliyor." if regime == "bull"
-                       else "Her iki yön açık.")
+                    f"EMA9={ema9:.0f} | EMA21={ema21:.0f} | EMA50={ema50:.0f}"
                 )
         except Exception as e:
             logger.error("BTC rejim güncelleme hatası", error=str(e))
