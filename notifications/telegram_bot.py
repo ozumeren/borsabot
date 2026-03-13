@@ -234,11 +234,12 @@ class TelegramNotifier:
                             f"({'+' if chg>=0 else ''}{chg*100:.2f}%)  "
                             f"Gerçekleşmemiş: <b>{sign}{format_usdt(unreal)}</b>"
                         )
+                    notional_display = t.margin_used * t.leverage
                     lines.append(
                         f"  <b>{t.coin}</b> {yön} {t.leverage}x | Giriş: {format_usdt(t.entry_price)}"
                         f"{price_line}\n"
                         f"  SL: {format_usdt(t.stop_loss_price)} | TP: {format_usdt(t.take_profit_price or 0)}\n"
-                        f"  Margin: {format_usdt(t.margin_used)} | Skor: {t.combined_score:.2f} | {h}s {m}dk"
+                        f"  Teminat: {format_usdt(t.margin_used)} | Hacim: {format_usdt(notional_display)} | Skor: {t.combined_score:.2f} | {h}s {m}dk"
                     )
                     total_margin += t.margin_used
                 unreal_sign = "+" if total_unrealized >= 0 else ""
