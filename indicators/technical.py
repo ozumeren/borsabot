@@ -16,7 +16,6 @@ class IndicatorValues:
     macd_signal: float
     macd_hist: float
     macd_hist_prev: float   # önceki mumun histogramı — gerçek crossover tespiti için
-    obv_slope: float = 0.0  # OBV 5-bar eğimi (pozitif=yükselen, negatif=düşen)
     ema_short: float
     ema_long: float
     sma_long: float
@@ -29,6 +28,7 @@ class IndicatorValues:
     close: float
     volume: float
     volume_avg20: float
+    obv_slope: float = 0.0  # OBV 5-bar eğimi (pozitif=yükselen, negatif=düşen)
 
     @property
     def is_volume_spike(self) -> bool:
