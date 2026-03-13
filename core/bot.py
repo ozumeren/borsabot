@@ -285,17 +285,22 @@ class BotEngine:
         try:
             all_articles = self.rss_fetcher.fetch_all(max_age_hours=6)
 
-            coins = list(self.state.open_positions.keys()) + \
-                    [coin_from_symbol(s) for s in
-                     (self.market_data.scan_top_coins(10) or [])]
+            coins = list(set(
+                list(self.state.open_positions.keys()) +
+                [coin_from_symbol(s) for s in (self.market_data.scan_top_coins(20) or [])]
+            ))
+
+            # CryptoPanic: tek batch isteğiyle tüm coinlerin haberlerini çek
+            await asyncio.to_thread(self.cryptopanic.fetch_news_batch, coins, limit=50)
+
             for coin in coins:
                 headlines    = self.rss_fetcher.filter_by_coin(all_articles, coin)
-                cp_news      = self.cryptopanic.fetch_news(coin, limit=10)
+                cp_news      = self.cryptopanic.fetch_news(coin)   # cache'ten gelir
                 cp_headlines = self.cryptopanic.get_headlines(cp_news)
                 all_headlines = list(set(headlines + cp_headlines))[:20]
                 self.state.news_cache[coin] = all_headlines
 
-                # Gemini ile AI sentiment analizi (cache'e yaz, rate limit için 5dk TTL)
+                # Gemini ile AI sentiment analizi
                 if self.gemini_analyzer.enabled and all_headlines:
                     score, reason = await asyncio.to_thread(
                         self.gemini_analyzer.analyze, coin, all_headlines
@@ -549,10 +554,13 @@ class BotEngine:
     # ── İç metodlar ───────────────────────────────────────────────────────────
 
     async def _evaluate_coin(self, coin: str, symbol: str):
-        """Tek bir coin için tam sinyal değerlendirmesi (15m + MTF 1h filtresi)."""
+        """Tek bir coin için tam sinyal değerlendirmesi (15m + MTF 1h/4h/1d filtresi)."""
         df = self.market_data.fetch_ohlcv(symbol, self.settings.timeframe)
         if df is None:
             return None
+
+        # Son mum henüz kapanmamış — kapalı mum üzerinden sinyal üret
+        df = df.iloc[:-1]
 
         try:
             iv = self.tech_analyzer.compute(df)
@@ -563,34 +571,38 @@ class BotEngine:
         if tech_signal.direction == Direction.NONE:
             return None
 
-        # ── MTF Filtresi: 1h VE 4h EMA9/EMA21 onayı ─────────────────────────
-        try:
-            df_1h = self.market_data.fetch_ohlcv(symbol, "1h")
-            if df_1h is not None and len(df_1h) >= 21:
-                ema9_1h  = ta.trend.EMAIndicator(df_1h["close"], window=9).ema_indicator().iloc[-1]
-                ema21_1h = ta.trend.EMAIndicator(df_1h["close"], window=21).ema_indicator().iloc[-1]
-                if tech_signal.direction == Direction.LONG and ema9_1h < ema21_1h:
-                    logger.debug("MTF 1h filtre: LONG sinyal iptal (1h bear)", coin=coin)
-                    return None
-                if tech_signal.direction == Direction.SHORT and ema9_1h > ema21_1h:
-                    logger.debug("MTF 1h filtre: SHORT sinyal iptal (1h bull)", coin=coin)
-                    return None
-        except Exception as e:
-            logger.debug("MTF 1h fetch hatası", coin=coin, error=str(e))
+        # ── MTF Filtresi: 1h + 4h + 1d EMA onayı ────────────────────────────
+        for tf, w_short, w_long in [("1h", 9, 21), ("4h", 9, 21)]:
+            try:
+                df_tf = self.market_data.fetch_ohlcv(symbol, tf)
+                if df_tf is not None and len(df_tf) >= w_long:
+                    df_tf = df_tf.iloc[:-1]
+                    ema_s = ta.trend.EMAIndicator(df_tf["close"], window=w_short).ema_indicator().iloc[-1]
+                    ema_l = ta.trend.EMAIndicator(df_tf["close"], window=w_long).ema_indicator().iloc[-1]
+                    if tech_signal.direction == Direction.LONG and ema_s < ema_l:
+                        logger.debug(f"MTF {tf} filtre: LONG iptal (bear)", coin=coin)
+                        return None
+                    if tech_signal.direction == Direction.SHORT and ema_s > ema_l:
+                        logger.debug(f"MTF {tf} filtre: SHORT iptal (bull)", coin=coin)
+                        return None
+            except Exception as e:
+                logger.debug(f"MTF {tf} fetch hatası", coin=coin, error=str(e))
 
+        # ── 1D Trend Filtresi: EMA50 makro yön ───────────────────────────────
         try:
-            df_4h = self.market_data.fetch_ohlcv(symbol, "4h")
-            if df_4h is not None and len(df_4h) >= 21:
-                ema9_4h  = ta.trend.EMAIndicator(df_4h["close"], window=9).ema_indicator().iloc[-1]
-                ema21_4h = ta.trend.EMAIndicator(df_4h["close"], window=21).ema_indicator().iloc[-1]
-                if tech_signal.direction == Direction.LONG and ema9_4h < ema21_4h:
-                    logger.debug("MTF 4h filtre: LONG sinyal iptal (4h bear)", coin=coin)
+            df_1d = self.market_data.fetch_ohlcv(symbol, "1d", limit=60)
+            if df_1d is not None and len(df_1d) >= 50:
+                df_1d = df_1d.iloc[:-1]
+                ema50_1d = ta.trend.EMAIndicator(df_1d["close"], window=50).ema_indicator().iloc[-1]
+                price_1d = df_1d["close"].iloc[-1]
+                if tech_signal.direction == Direction.LONG and price_1d < ema50_1d:
+                    logger.debug("1D filtre: LONG iptal (EMA50 altında)", coin=coin)
                     return None
-                if tech_signal.direction == Direction.SHORT and ema9_4h > ema21_4h:
-                    logger.debug("MTF 4h filtre: SHORT sinyal iptal (4h bull)", coin=coin)
+                if tech_signal.direction == Direction.SHORT and price_1d > ema50_1d:
+                    logger.debug("1D filtre: SHORT iptal (EMA50 üstünde)", coin=coin)
                     return None
         except Exception as e:
-            logger.debug("MTF 4h fetch hatası", coin=coin, error=str(e))
+            logger.debug("1D fetch hatası", coin=coin, error=str(e))
 
         # ── BTC Piyasa Rejimi Filtresi ────────────────────────────────────────
         # BTC 4h trend ile çelişen sinyalleri engelle (tüm coinler için)

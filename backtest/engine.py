@@ -49,9 +49,10 @@ def _precompute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["rsi"]        = ta.momentum.RSIIndicator(close, window=RSI_PERIOD).rsi()
     macd_obj         = ta.trend.MACD(close, MACD_FAST, MACD_SLOW, MACD_SIGNAL_PERIOD)
-    df["macd_line"]  = macd_obj.macd()
-    df["macd_sig"]   = macd_obj.macd_signal()
-    df["macd_hist"]  = macd_obj.macd_diff()
+    df["macd_line"]      = macd_obj.macd()
+    df["macd_sig"]       = macd_obj.macd_signal()
+    df["macd_hist"]      = macd_obj.macd_diff()
+    df["macd_hist_prev"] = df["macd_hist"].shift(1)
     df["ema_short"]  = ta.trend.EMAIndicator(close, window=EMA_SHORT).ema_indicator()
     df["ema_long"]   = ta.trend.EMAIndicator(close, window=EMA_LONG).ema_indicator()
     df["sma_long"]   = ta.trend.SMAIndicator(close, window=min(SMA_LONG, len(df)-1)).sma_indicator()
@@ -62,6 +63,8 @@ def _precompute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["atr"]        = ta.volatility.AverageTrueRange(high, low, close, window=ATR_PERIOD).average_true_range()
     df["adx"]        = ta.trend.ADXIndicator(high, low, close, window=ADX_PERIOD).adx()
     df["vol_avg20"]  = vol.rolling(20).mean()
+    obv_raw          = ta.volume.OnBalanceVolumeIndicator(close, vol).on_balance_volume()
+    df["obv_slope"]  = (obv_raw - obv_raw.shift(5)) / (obv_raw.shift(5).abs() + 1)
 
     return df
 
@@ -74,6 +77,7 @@ def _row_to_indicator_values(row: pd.Series) -> IndicatorValues:
         macd_line=float(row["macd_line"]),
         macd_signal=float(row["macd_sig"]),
         macd_hist=float(row["macd_hist"]),
+        macd_hist_prev=float(row["macd_hist_prev"]) if not pd.isna(row["macd_hist_prev"]) else 0.0,
         ema_short=float(row["ema_short"]),
         ema_long=float(row["ema_long"]),
         sma_long=float(row["sma_long"]),
@@ -86,6 +90,7 @@ def _row_to_indicator_values(row: pd.Series) -> IndicatorValues:
         close=float(row["close"]),
         volume=float(row["volume"]),
         volume_avg20=float(row["vol_avg20"]) if not pd.isna(row["vol_avg20"]) else float(row["volume"]),
+        obv_slope=float(row["obv_slope"]) if not pd.isna(row["obv_slope"]) else 0.0,
     )
 
 

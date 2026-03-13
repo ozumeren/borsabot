@@ -16,6 +16,7 @@ class IndicatorValues:
     macd_signal: float
     macd_hist: float
     macd_hist_prev: float   # önceki mumun histogramı — gerçek crossover tespiti için
+    obv_slope: float = 0.0  # OBV 5-bar eğimi (pozitif=yükselen, negatif=düşen)
     ema_short: float
     ema_long: float
     sma_long: float
@@ -82,9 +83,16 @@ class TechnicalAnalyzer:
         adx_indicator = ta.trend.ADXIndicator(high, low, close, window=ADX_PERIOD)
         adx = adx_indicator.adx().iloc[-1]
 
-        # Hacim
+        # Hacim + OBV
         volume = float(vol.iloc[-1])
         volume_avg20 = float(vol.tail(20).mean())
+        obv_series = ta.volume.OnBalanceVolumeIndicator(close, vol).on_balance_volume()
+        if len(obv_series) >= 5:
+            obv_tail = obv_series.tail(5)
+            obv_base = abs(obv_tail.iloc[0]) + 1  # sıfıra bölmeyi önle
+            obv_slope = float((obv_tail.iloc[-1] - obv_tail.iloc[0]) / obv_base)
+        else:
+            obv_slope = 0.0
 
         return IndicatorValues(
             rsi=float(rsi),
@@ -104,4 +112,5 @@ class TechnicalAnalyzer:
             close=float(price),
             volume=volume,
             volume_avg20=volume_avg20,
+            obv_slope=obv_slope,
         )

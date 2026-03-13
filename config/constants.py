@@ -1,7 +1,7 @@
 # ── Teknik Analiz Parametreleri ──────────────────────────────────────────────
 RSI_PERIOD = 14
-RSI_OVERBOUGHT = 70
-RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 75   # 70'den 75'e: daha seçici, false signal azalır
+RSI_OVERSOLD = 25     # 30'dan 25'e: gerçek aşırı satım bölgesi
 
 MACD_FAST = 12
 MACD_SLOW = 26

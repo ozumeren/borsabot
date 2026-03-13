@@ -1,8 +1,11 @@
+import time
 import httpx
 from config.constants import CRYPTOPANIC_BASE_URL
 from utils.logger import get_logger
 
 logger = get_logger("sentiment.cryptopanic")
+
+_CACHE_TTL = 300  # 5 dakika
 
 # Sentiment etiket → skor dönüşümü
 VOTE_SCORE_MAP = {
@@ -21,17 +24,32 @@ class CryptoPanicFetcher:
     def __init__(self, api_key: str = ""):
         self.api_key = api_key
         self._base_url = CRYPTOPANIC_BASE_URL
+        self._cache: dict[str, tuple[list, float]] = {}  # coin → (news, timestamp)
 
     def fetch_news(self, coin: str, limit: int = 20) -> list[dict]:
-        """Belirli bir coin için son haberleri çeker."""
+        """Belirli bir coin için son haberleri çeker (cache'ten)."""
         if not self.api_key:
-            logger.debug("CryptoPanic API key yok, atlanıyor")
             return []
+        cached = self._cache.get(coin.upper())
+        if cached and (time.time() - cached[1]) < _CACHE_TTL:
+            return cached[0]
+        # Cache miss — tek coin için tek istek
+        results = self._fetch_api(coin.upper(), limit)
+        self._cache[coin.upper()] = (results, time.time())
+        return results
 
+    def fetch_news_batch(self, coins: list[str], limit: int = 50) -> None:
+        """
+        Birden fazla coin için TEK API isteği atar ve cache'e yazar.
+        Rate limit sorununu çözer: 30 coin yerine 1 istek.
+        """
+        if not self.api_key or not coins:
+            return
+        currencies = ",".join(c.upper() for c in coins[:30])  # max 30
         try:
             params = {
                 "auth_token": self.api_key,
-                "currencies": coin.upper(),
+                "currencies": currencies,
                 "public": "true",
                 "limit": limit,
                 "kind": "news",
@@ -39,8 +57,37 @@ class CryptoPanicFetcher:
             with httpx.Client(timeout=15.0) as client:
                 resp = client.get(self._base_url, params=params)
                 resp.raise_for_status()
-                data = resp.json()
-                return data.get("results", [])
+                results = resp.json().get("results", [])
+
+            # Haberleri coin'e göre grupla
+            coin_news: dict[str, list] = {c.upper(): [] for c in coins}
+            for item in results:
+                for cur in item.get("currencies", []):
+                    code = cur.get("code", "").upper()
+                    if code in coin_news:
+                        coin_news[code].append(item)
+
+            now = time.time()
+            for coin, news in coin_news.items():
+                self._cache[coin] = (news, now)
+
+            logger.debug("CryptoPanic batch tamamlandı", coins=len(coins), haberler=len(results))
+        except Exception as e:
+            logger.warning("CryptoPanic batch API hatası", error=str(e))
+
+    def _fetch_api(self, coin: str, limit: int) -> list[dict]:
+        try:
+            params = {
+                "auth_token": self.api_key,
+                "currencies": coin,
+                "public": "true",
+                "limit": limit,
+                "kind": "news",
+            }
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(self._base_url, params=params)
+                resp.raise_for_status()
+                return resp.json().get("results", [])
         except Exception as e:
             logger.warning("CryptoPanic API hatası", coin=coin, error=str(e))
             return []

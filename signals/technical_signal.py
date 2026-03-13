@@ -126,12 +126,25 @@ class TechnicalSignalGenerator:
             long_reasons.append("Hacim spike")
             short_reasons.append("Hacim spike")
 
-        # ── ADX güçlü trend bonusu ────────────────────────────────────────────
+        # ── OBV teyidi / ıraksaması ────────────────────────────────────────────
+        # OBV yön teyidi: +0.05 bonus; ıraksama (zıt yön): -0.05 ceza
+        if iv.obv_slope > 0.01:
+            long_score  += 0.05
+            short_score -= 0.03
+            long_reasons.append(f"OBV yükselen trend ({iv.obv_slope:.2f})")
+        elif iv.obv_slope < -0.01:
+            short_score += 0.05
+            long_score  -= 0.03
+            short_reasons.append(f"OBV düşen trend ({iv.obv_slope:.2f})")
+
+        # ── ADX güçlü trend bonusu — yalnızca baskın yöne ────────────────────
         if adx_bonus:
-            long_score  += adx_bonus
-            short_score += adx_bonus
-            long_reasons.append(f"ADX güçlü trend: {iv.adx:.1f}")
-            short_reasons.append(f"ADX güçlü trend: {iv.adx:.1f}")
+            if long_score >= short_score:
+                long_score  += adx_bonus
+                long_reasons.append(f"ADX güçlü trend: {iv.adx:.1f}")
+            else:
+                short_score += adx_bonus
+                short_reasons.append(f"ADX güçlü trend: {iv.adx:.1f}")
 
         # ── Karar ────────────────────────────────────────────────────────────
         if long_score >= 0.50 and short_score >= 0.50:
