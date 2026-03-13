@@ -18,7 +18,30 @@ def pct_change(old: float, new: float) -> float:
 
 
 def format_usdt(amount: float) -> str:
-    return f"${amount:,.2f}"
+    """Fiyatı anlamlı basamak sayısıyla gösterir (küçük coinlerde kusuratlar kaybolmasın)."""
+    abs_val = abs(amount)
+    if abs_val == 0:
+        return "$0.00"
+    elif abs_val >= 1000:
+        return f"${amount:,.2f}"
+    elif abs_val >= 1:
+        return f"${amount:,.4f}"
+    elif abs_val >= 0.01:
+        return f"${amount:,.6f}"
+    else:
+        return f"${amount:,.8f}"
+
+
+def format_price(price: float) -> str:
+    """Coin fiyatı için — büyük coinlerde 2, küçüklerde 6-8 ondalık."""
+    if price >= 100:
+        return f"${price:,.2f}"
+    elif price >= 1:
+        return f"${price:,.4f}"
+    elif price >= 0.0001:
+        return f"${price:,.6f}"
+    else:
+        return f"${price:,.8f}"
 
 
 def format_pct(value: float) -> str:

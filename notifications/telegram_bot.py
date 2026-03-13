@@ -5,7 +5,7 @@ import httpx
 import os
 from typing import Optional
 from utils.logger import get_logger
-from utils.helpers import format_usdt, format_pct
+from utils.helpers import format_usdt, format_pct, format_price
 
 logger = get_logger("notifications.telegram")
 
@@ -204,97 +204,115 @@ class TelegramNotifier:
         with get_session() as session:
             open_trades = session.query(Trade).filter(Trade.status == "OPEN").all()
             now_cet = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
-            now_utc = now_cet.strftime("%Y-%m-%d %H:%M CET")
-            lines = [f"🤖 <b>PORTFÖY DURUMU</b>  <i>{now_utc}</i>\n"]
+            now_str = now_cet.strftime("%d.%m.%Y %H:%M CET")
+            lines = [f"🤖 <b>PORTFÖY DURUMU</b> — <i>{now_str}</i>"]
 
-            lines.append(f"📂 <b>Açık Pozisyonlar ({len(open_trades)})</b>")
+            # ── Açık Pozisyonlar ─────────────────────────────────────────────
+            lines.append(f"\n📂 <b>Açık Pozisyonlar ({len(open_trades)})</b>")
+            total_margin = 0.0
+            total_unrealized = 0.0
+
             if not open_trades:
-                lines.append("  — Açık pozisyon yok")
+                lines.append("  —")
             else:
-                total_margin = 0.0
-                total_unrealized = 0.0
                 for t in open_trades:
-                    yön = "🟢 LONG" if t.direction == "long" else "🔴 SHORT"
+                    yön = "🟢" if t.direction == "long" else "🔴"
                     dur = datetime.datetime.utcnow() - t.opened_at
                     h = int(dur.total_seconds() // 3600)
                     m = int((dur.total_seconds() % 3600) // 60)
                     current = self._fetch_price(t.coin)
-                    price_line = ""
+
+                    # TP1 ve TP2 hesapla (stop mesafesine göre)
+                    sl = t.stop_loss_price or 0.0
+                    tp1 = t.take_profit_price or 0.0
+                    if sl > 0 and t.entry_price > 0:
+                        stop_dist = abs(t.entry_price - sl)
+                        tp2 = (t.entry_price + stop_dist * 3.5
+                               if t.direction == "long"
+                               else t.entry_price - stop_dist * 3.5)
+                    else:
+                        tp2 = 0.0
+
+                    unreal_line = ""
                     if current > 0 and t.entry_price > 0:
                         chg = (current - t.entry_price) / t.entry_price
                         if t.direction == "short":
                             chg = -chg
                         notional = t.margin_used * t.leverage
-                        fee = notional * 0.002
-                        unreal = chg * notional - fee
+                        unreal = chg * notional - notional * 0.002
                         total_unrealized += unreal
                         sign = "+" if unreal >= 0 else ""
-                        price_line = (
-                            f"\n  Anlık: <b>{format_usdt(current)}</b> "
-                            f"({'+' if chg>=0 else ''}{chg*100:.2f}%)  "
-                            f"Gerçekleşmemiş: <b>{sign}{format_usdt(unreal)}</b>"
+                        pnl_e = "📈" if unreal >= 0 else "📉"
+                        unreal_line = (
+                            f"\n  Anlık: {format_price(current)} "
+                            f"({'+' if chg>=0 else ''}{chg*100:.2f}%) "
+                            f"{pnl_e} <b>{sign}{format_usdt(unreal)}</b>"
                         )
-                    notional_display = t.margin_used * t.leverage
+
+                    notional_val = t.margin_used * t.leverage
+                    tp2_str = f"  TP2: {format_price(tp2)}\n" if tp2 > 0 else ""
+
                     lines.append(
-                        f"  <b>{t.coin}</b> {yön} {t.leverage}x | Giriş: {format_usdt(t.entry_price)}"
-                        f"{price_line}\n"
-                        f"  SL: {format_usdt(t.stop_loss_price)} | TP: {format_usdt(t.take_profit_price or 0)}\n"
-                        f"  Teminat: {format_usdt(t.margin_used)} | Hacim: {format_usdt(notional_display)} | Skor: {t.combined_score:.2f} | {h}s {m}dk"
+                        f"\n{yön} <b>{t.coin}</b> {t.direction.upper()} {t.leverage}x  ({h}s {m}dk)"
+                        f"{unreal_line}\n"
+                        f"  Giriş: {format_price(t.entry_price)}  "
+                        f"SL: {format_price(sl)}\n"
+                        f"  TP1: {format_price(tp1)}  "
+                        f"TP2: {format_price(tp2) if tp2 else '—'}\n"
+                        f"  Teminat: {format_usdt(t.margin_used)}  Hacim: {format_usdt(notional_val)}"
                     )
                     total_margin += t.margin_used
+
                 unreal_sign = "+" if total_unrealized >= 0 else ""
-                unreal_emoji = "📈" if total_unrealized >= 0 else "📉"
+                unreal_e = "📈" if total_unrealized >= 0 else "📉"
                 lines.append(
-                    f"  Kullanılan margin: <b>{format_usdt(total_margin)}</b>\n"
-                    f"  {unreal_emoji} Toplam Gerçekleşmemiş PnL: <b>{unreal_sign}{format_usdt(total_unrealized)}</b>"
+                    f"\n  Toplam teminat: <b>{format_usdt(total_margin)}</b>  "
+                    f"{unreal_e} Gerçekleşmemiş: <b>{unreal_sign}{format_usdt(total_unrealized)}</b>"
                 )
 
+            # ── Bugün ────────────────────────────────────────────────────────
             today = datetime.date.today().isoformat()
             stats = session.query(DailyStats).filter_by(date=today).first()
-
-            # Bugünkü realize edilmiş PnL'i Trade tablosundan da çek (DailyStats yoksa bile)
             today_dt = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             today_realized = session.query(func.sum(Trade.pnl_usdt)).filter(
-                Trade.status != "OPEN",
-                Trade.closed_at >= today_dt,
+                Trade.status != "OPEN", Trade.closed_at >= today_dt,
             ).scalar() or 0.0
-            today_trade_count = session.query(Trade).filter(
-                Trade.status != "OPEN",
-                Trade.closed_at >= today_dt,
+            today_count = session.query(Trade).filter(
+                Trade.status != "OPEN", Trade.closed_at >= today_dt,
             ).count()
             today_wins = session.query(Trade).filter(
-                Trade.status != "OPEN",
-                Trade.closed_at >= today_dt,
-                Trade.pnl_usdt > 0,
+                Trade.status != "OPEN", Trade.closed_at >= today_dt, Trade.pnl_usdt > 0,
             ).count()
-            today_losses = today_trade_count - today_wins
 
-            lines.append(f"\n📊 <b>Bugün ({today})</b>")
-            if not today_trade_count:
-                lines.append("  — Henüz kapalı işlem yok")
+            lines.append(f"\n📊 <b>Bugün</b>")
+            if not today_count:
+                lines.append("  — Kapalı işlem yok")
             else:
-                wr = (today_wins / today_trade_count * 100) if today_trade_count else 0
-                real_sign = "+" if today_realized >= 0 else ""
-                real_emoji = "📈" if today_realized >= 0 else "📉"
-                cb = "🔴 Ateşlendi" if (stats and stats.circuit_breaker_fired) else "🟢 Aktif"
+                wr = today_wins / today_count * 100
+                r_sign = "+" if today_realized >= 0 else ""
+                r_e = "📈" if today_realized >= 0 else "📉"
                 lines.append(
-                    f"  İşlem: {today_trade_count} | ✅ {today_wins} / ❌ {today_losses}\n"
-                    f"  Kazanma: {wr:.1f}%\n"
-                    f"  {real_emoji} Realize PnL: <b>{real_sign}{format_usdt(today_realized)}</b>\n"
-                    f"  Circuit Breaker: {cb}"
+                    f"  {today_count} işlem  ✅{today_wins} ❌{today_count - today_wins}  "
+                    f"%{wr:.0f} isabet\n"
+                    f"  {r_e} Realize: <b>{r_sign}{format_usdt(today_realized)}</b>"
                 )
 
-            closed = session.query(Trade).filter(Trade.status != "OPEN")
-            total_all = closed.count()
-            wins_all = closed.filter(Trade.pnl_usdt > 0).count()
-            total_pnl_all = session.query(func.sum(Trade.pnl_usdt)).filter(Trade.status != "OPEN").scalar() or 0.0
+            # ── Genel ────────────────────────────────────────────────────────
+            total_all = session.query(Trade).filter(Trade.status != "OPEN").count()
+            wins_all = session.query(Trade).filter(
+                Trade.status != "OPEN", Trade.pnl_usdt > 0
+            ).count()
+            total_pnl_all = session.query(func.sum(Trade.pnl_usdt)).filter(
+                Trade.status != "OPEN"
+            ).scalar() or 0.0
             wr_all = (wins_all / total_all * 100) if total_all else 0
-            pnl_sign = "+" if total_pnl_all >= 0 else ""
-            pnl_emoji = "📈" if total_pnl_all >= 0 else "📉"
+            p_sign = "+" if total_pnl_all >= 0 else ""
+            p_e = "📈" if total_pnl_all >= 0 else "📉"
+            cb = "🔴" if (stats and stats.circuit_breaker_fired) else "🟢"
             lines.append(
-                f"\n📈 <b>Tüm Zamanlar</b>\n"
-                f"  Kapalı: {total_all} | Kazanma: {wr_all:.1f}%\n"
-                f"  {pnl_emoji} Toplam Realize PnL: <b>{pnl_sign}{format_usdt(total_pnl_all)}</b>"
+                f"\n🗂 <b>Genel</b>\n"
+                f"  {total_all} işlem  %{wr_all:.0f} isabet  CB: {cb}\n"
+                f"  {p_e} Toplam: <b>{p_sign}{format_usdt(total_pnl_all)}</b>"
             )
 
         return "\n".join(lines)
