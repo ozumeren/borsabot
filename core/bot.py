@@ -604,16 +604,6 @@ class BotEngine:
             logger.debug("1D fetch hatası", coin=coin, error=str(e))
 
         # ── BTC Piyasa Rejimi Filtresi ────────────────────────────────────────
-        # BTC 4h trend ile çelişen sinyalleri engelle (tüm coinler için)
-        if coin != "BTC":
-            btc_regime = self.state.btc_regime  # "bull" | "bear" | "neutral"
-            if btc_regime == "bear" and tech_signal.direction == Direction.LONG:
-                logger.debug("BTC rejimi BEAR, LONG sinyal engellendi", coin=coin)
-                return None
-            if btc_regime == "bull" and tech_signal.direction == Direction.SHORT:
-                logger.debug("BTC rejimi BULL, SHORT sinyal engellendi", coin=coin)
-                return None
-
         # Gerçek piyasa anlık fiyatı
         real_price = self.market_data.get_current_price(symbol)
         entry_price = real_price if real_price else iv.close
