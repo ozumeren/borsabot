@@ -91,6 +91,11 @@ def _row_to_indicator_values(row: pd.Series) -> IndicatorValues:
         volume=float(row["volume"]),
         volume_avg20=float(row["vol_avg20"]) if not pd.isna(row["vol_avg20"]) else float(row["volume"]),
         obv_slope=float(row["obv_slope"]) if not pd.isna(row["obv_slope"]) else 0.0,
+        # Price action backtest'te satır bazında hesaplanmıyor (varsayılan sıfır)
+        pa_bull_score=0.0,
+        pa_bear_score=0.0,
+        pa_pattern="",
+        pa_structure="UNKNOWN",
     )
 
 

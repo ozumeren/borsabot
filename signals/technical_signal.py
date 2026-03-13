@@ -146,6 +146,38 @@ class TechnicalSignalGenerator:
                 short_score += adx_bonus
                 short_reasons.append(f"ADX güçlü trend: {iv.adx:.1f}")
 
+        # ── Price Action formasyonları (max 0.20 katkı) ───────────────────
+        # PA skoru teknik skora doğrusal eklenir (0.15 bant içinde)
+        if iv.pa_bull_score > 0:
+            contrib = round(iv.pa_bull_score * 0.20, 3)
+            long_score += contrib
+            long_reasons.append(
+                f"PA {iv.pa_pattern or 'formasyon'}: "
+                f"{iv.pa_bull_score:.2f}"
+                + (f" [{iv.pa_structure}]" if iv.pa_structure not in ("UNKNOWN", "") else "")
+            )
+            if iv.pa_bull_score >= 0.50:
+                long_count += 1
+
+        if iv.pa_bear_score > 0:
+            contrib = round(iv.pa_bear_score * 0.20, 3)
+            short_score += contrib
+            short_reasons.append(
+                f"PA {iv.pa_pattern or 'formasyon'}: "
+                f"{iv.pa_bear_score:.2f}"
+                + (f" [{iv.pa_structure}]" if iv.pa_structure not in ("UNKNOWN", "") else "")
+            )
+            if iv.pa_bear_score >= 0.50:
+                short_count += 1
+
+        # ── Piyasa yapısı (market structure) bonusu ───────────────────────
+        if iv.pa_structure == "UPTREND":
+            long_score  += 0.05
+            long_reasons.append("PA yapı: yükselen trend (HH+HL)")
+        elif iv.pa_structure == "DOWNTREND":
+            short_score += 0.05
+            short_reasons.append("PA yapı: düşen trend (LH+LL)")
+
         # ── Karar ────────────────────────────────────────────────────────────
         if long_score >= 0.50 and short_score >= 0.50:
             return TechnicalSignal(Direction.NONE, max(long_score, short_score),

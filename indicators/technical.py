@@ -7,6 +7,7 @@ from config.constants import (
     EMA_SHORT, EMA_LONG, SMA_LONG,
     BB_PERIOD, BB_STD, ATR_PERIOD, ADX_PERIOD,
 )
+from indicators.price_action import PriceActionAnalyzer
 
 
 @dataclass
@@ -28,7 +29,13 @@ class IndicatorValues:
     close: float
     volume: float
     volume_avg20: float
-    obv_slope: float = 0.0  # OBV 5-bar eğimi (pozitif=yükselen, negatif=düşen)
+    obv_slope: float = 0.0        # OBV 5-bar eğimi (pozitif=yükselen, negatif=düşen)
+
+    # ── Price Action alanları (default değerli — en sonda) ───────────────
+    pa_bull_score: float = 0.0    # 0.0–1.0 yükseliş formasyon gücü
+    pa_bear_score: float = 0.0    # 0.0–1.0 düşüş formasyon gücü
+    pa_pattern: str = ""          # en güçlü tespit edilen formasyon adı
+    pa_structure: str = "UNKNOWN" # UPTREND | DOWNTREND | RANGING | UNKNOWN
 
     @property
     def is_volume_spike(self) -> bool:
@@ -94,6 +101,9 @@ class TechnicalAnalyzer:
         else:
             obv_slope = 0.0
 
+        # Price Action
+        pa = PriceActionAnalyzer().analyze(df)
+
         return IndicatorValues(
             rsi=float(rsi),
             macd_line=float(macd_line),
@@ -113,4 +123,8 @@ class TechnicalAnalyzer:
             volume=volume,
             volume_avg20=volume_avg20,
             obv_slope=obv_slope,
+            pa_bull_score=pa.bull_score,
+            pa_bear_score=pa.bear_score,
+            pa_pattern=pa.top_pattern,
+            pa_structure=pa.market_structure,
         )
