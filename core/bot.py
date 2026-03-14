@@ -249,10 +249,22 @@ class BotEngine:
                 if price:
                     price_map[coin] = price
 
+            # last_prices'ı güncelle (pozisyon kartlarında güncel fiyat göstermek için)
+            self.state.last_prices.update(price_map)
+
             if self.settings.paper_trading:
-                closed = self.engine.update_prices(price_map)  # {coin: status}
-                for coin, status in closed.items():
+                closed = self.engine.update_prices(price_map)  # {coin: (status, pnl)}
+                for coin, (status, pnl) in closed.items():
                     self.state.remove_position(coin)
+                    self.state.update_daily_pnl(pnl)
+                    self.state.portfolio_value = self.engine.portfolio_value
+                    # TP1 kısmi kapanma için trade sayısı artmaz, sadece pnl güncellenir
+                    if status != "CLOSED_TP1":
+                        self.state.daily_trades += 1
+                        if pnl > 0:
+                            self.state.daily_winning += 1
+                        else:
+                            self.state.daily_losing += 1
                     if status in ("CLOSED_SL", "CLOSED_CIRCUIT"):
                         self.state.sl_cooldown[coin] = time.time()
                         self.state.consecutive_losses += 1
@@ -270,7 +282,7 @@ class BotEngine:
                                     "Bot 2 saat boyunca yeni işlem açmayacak.\n"
                                     "Piyasa koşulları değerlendirilmeli."
                                 )
-                    elif status in ("CLOSED_TP", "CLOSED_TP1"):
+                    elif status in ("CLOSED_TP", "CLOSED_TP1", "CLOSED_TP2"):
                         self.state.consecutive_losses = 0  # kazanışta sıfırla
             else:
                 await self._sync_live_positions()

@@ -6,6 +6,7 @@ from config.constants import (
     TECHNICAL_WEIGHT, SENTIMENT_WEIGHT, MARKET_DATA_WEIGHT,
     CRYPTOPANIC_WEIGHT, FEAR_GREED_WEIGHT,
 )
+from web.score_utils import display_score as _display_score
 
 router = APIRouter()
 _engine: Any = None
@@ -68,6 +69,8 @@ async def full_scan():
                 iv = await asyncio.to_thread(_engine.tech_analyzer.compute, df)
                 signal = _engine.tech_sig_gen.generate(iv)
                 score = float(getattr(signal, "score", getattr(signal, "technical_score", 0)) or 0)
+                if score == 0.0:
+                    score = _display_score(iv)
                 direction = str(getattr(signal, "direction", "NONE"))
 
                 last_price = float(df["close"].iloc[-1])

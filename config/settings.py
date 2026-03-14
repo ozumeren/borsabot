@@ -49,6 +49,10 @@ class BotSettings(BaseSettings):
     paper_trading: bool = Field(default=True, alias="PAPER_TRADING")
     paper_initial_balance: float = Field(default=0.0, alias="PAPER_INITIAL_BALANCE")
 
+    # ── Web API ───────────────────────────────────────────────────────────────
+    web_api_key: str = Field(default="", alias="WEB_API_KEY")
+    web_port: int = Field(default=8080, alias="WEB_PORT")
+
     def validate_for_live(self) -> list[str]:
         """Canlı trading için gerekli alanları kontrol eder."""
         errors = []

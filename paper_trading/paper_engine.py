@@ -177,13 +177,13 @@ class PaperEngine:
 
         return pos
 
-    def update_prices(self, price_map: dict[str, float]) -> dict[str, str]:
+    def update_prices(self, price_map: dict[str, float]) -> dict[str, tuple[str, float]]:
         """
         Pozisyonları günceller. SL/TP vurarsa kapatır.
         Trailing stop varsa SL'yi dinamik olarak günceller.
-        Dönen: {coin: status} — kapanan pozisyonlar (CLOSED_SL, CLOSED_TP, CLOSED_CIRCUIT)
+        Dönen: {coin: (status, pnl)} — kapanan pozisyonlar (CLOSED_SL, CLOSED_TP, CLOSED_CIRCUIT)
         """
-        closed: dict[str, str] = {}
+        closed: dict[str, tuple[str, float]] = {}
         for coin, pos in list(self.positions.items()):
             price = price_map.get(coin)
             if price is None:
@@ -239,7 +239,8 @@ class PaperEngine:
                     (pos.direction == "short" and price <= pos.take_profit_price)
                 )
                 if tp1_triggered:
-                    self._partial_close_tp1(coin, pos, price)
+                    tp1_pnl = self._partial_close_tp1(coin, pos, price)
+                    closed[coin] = ("CLOSED_TP1", tp1_pnl)
                     continue  # pozisyon devam ediyor, tam kapanmadı
             else:
                 # TP1 oldu — TP2 kontrolü
@@ -248,18 +249,18 @@ class PaperEngine:
                     (pos.direction == "short" and price <= pos.take_profit2_price)
                 )
                 if tp2_triggered:
-                    self._close_position(coin, pos, price, "CLOSED_TP")
-                    closed[coin] = "CLOSED_TP"
+                    pnl = self._close_position(coin, pos, price, "CLOSED_TP")
+                    closed[coin] = ("CLOSED_TP", pnl)
                     continue
 
             if sl_hit or emergency:
                 status = "CLOSED_SL" if sl_hit else "CLOSED_CIRCUIT"
-                self._close_position(coin, pos, price, status)
-                closed[coin] = status
+                pnl = self._close_position(coin, pos, price, status)
+                closed[coin] = (status, pnl)
 
         return closed
 
-    def _partial_close_tp1(self, coin: str, pos: PaperPosition, tp1_price: float) -> None:
+    def _partial_close_tp1(self, coin: str, pos: PaperPosition, tp1_price: float) -> float:
         """TP1 tetiklendi: %50 kapat, SL'i breakeven'e çek, kalan %50 TP2'yi beklesin."""
         half_qty    = pos.quantity / 2
         half_margin = pos.margin / 2
@@ -311,7 +312,9 @@ class PaperEngine:
                 is_paper=True,
             )
 
-    def _close_position(self, coin: str, pos: PaperPosition, exit_price: float, status: str) -> None:
+        return pnl
+
+    def _close_position(self, coin: str, pos: PaperPosition, exit_price: float, status: str) -> float:
         # PnL'yi exit_price üzerinden hesapla (unrealized_pnl property'si kullanılmaz — fee çifte düşülmesin)
         if pos.direction == "long":
             gross = (exit_price - pos.entry_price) * pos.quantity
@@ -340,3 +343,4 @@ class PaperEngine:
             )
 
         del self.positions[coin]
+        return pnl

@@ -51,15 +51,44 @@ async def main() -> None:
     scheduler.setup(bot)
     scheduler.start()
 
+    tasks = [asyncio.create_task(_run_bot())]
+
+    # Web API sunucusu (WEB_API_KEY tanımlıysa başlat)
+    if settings.web_api_key:
+        import uvicorn
+        from web.app import create_web_app
+
+        web_app = create_web_app(bot)
+        config = uvicorn.Config(
+            web_app,
+            host="0.0.0.0",
+            port=settings.web_port,
+            log_level="info",
+            access_log=False,
+        )
+        server = uvicorn.Server(config)
+        tasks.append(asyncio.create_task(server.serve()))
+        logger.info(
+            "Web API başlatıldı",
+            port=settings.web_port,
+            docs=f"http://localhost:{settings.web_port}/api/docs",
+        )
+    else:
+        logger.info("WEB_API_KEY tanımlı değil — web sunucusu başlatılmadı")
+
     try:
-        # Sonsuz döngü
-        await asyncio.Event().wait()
+        await asyncio.gather(*tasks)
     except (KeyboardInterrupt, SystemExit):
         logger.info("Kapatma sinyali alındı")
     finally:
         await bot.shutdown()
         scheduler.stop()
         logger.info("Bot kapatıldı")
+
+
+async def _run_bot() -> None:
+    """Keeps the bot alive indefinitely."""
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":

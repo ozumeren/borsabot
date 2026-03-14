@@ -1,8 +1,9 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { fetchCoinDetail, refreshCoinDetail } from '../lib/api'
+import { fetchCoinDetail, refreshCoinDetail, fetchPositions } from '../lib/api'
 import TradingViewChart from '../components/TradingViewChart'
+import PositionChart from '../components/PositionChart'
 
 interface TFData {
   label: string
@@ -34,6 +35,16 @@ interface ScoreBreakdown {
   funding_rate: number | null
 }
 
+interface BotScores {
+  long_combined:  number
+  short_combined: number
+  long_tech:      number
+  short_tech:     number
+  threshold:      number
+  long_eligible:  boolean
+  short_eligible: boolean
+}
+
 interface CoinData {
   coin: string
   last_price: number
@@ -45,6 +56,7 @@ interface CoinData {
   sentiment_score: number
   market_score: number
   score_breakdown: ScoreBreakdown
+  bot_scores?: BotScores
   timeframes: Record<string, TFData>
   reasons: string[]
 }
@@ -215,10 +227,20 @@ export default function CoinDetail() {
   const { data, isLoading, error } = useQuery<CoinData>({
     queryKey: ['coin-detail', coin],
     queryFn: () => fetchCoinDetail(coin),
-    staleTime: 60 * 60 * 1000,   // 1 saat
+    staleTime: 60 * 60 * 1000,
     gcTime:    60 * 60 * 1000,
     retry: 1,
   })
+
+  const { data: positionsData } = useQuery({
+    queryKey: ['positions'],
+    queryFn: fetchPositions,
+    refetchInterval: 5_000,
+  })
+
+  const openPos = positionsData?.positions?.find(
+    (p: any) => (p.coin ?? '').toUpperCase() === coin
+  )
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -294,24 +316,53 @@ export default function CoinDetail() {
         </div>
       </div>
 
-      {/* TradingView grafiği + zaman dilimi seçici */}
+      {/* Grafik */}
       <div className="card p-0 overflow-hidden">
-        <div className="flex items-center gap-1 px-3 pt-2 pb-1 border-b border-border">
-          {TF_ORDER.map(tf => (
-            <button
-              key={tf}
-              onClick={() => setActiveTf(tf)}
-              className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${
-                activeTf === tf
-                  ? 'text-accent bg-accent/10 border border-accent/20'
-                  : 'text-muted hover:text-text'
-              }`}
-            >
-              {data.timeframes[tf]?.label ?? tf}
-            </button>
-          ))}
-        </div>
-        <TradingViewChart coin={coin} timeframe={TF_TIMEFRAME[activeTf] ?? '1h'} height={480} />
+        {openPos ? (
+          <>
+            <div className="flex items-center justify-between px-3 pt-2 pb-1.5 border-b border-border">
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-mono font-bold ${openPos.direction === 'long' ? 'text-accent' : 'text-danger'}`}>
+                  {openPos.direction === 'long' ? 'LONG ▲' : 'SHORT ▼'}
+                </span>
+                <span className="text-muted text-xs">· Giriş: <span className="text-text font-mono">${Number(openPos.entry_price).toFixed(4)}</span></span>
+                <span className="text-muted text-xs">· SL: <span className="text-danger font-mono">${Number(openPos.stop_loss_price).toFixed(4)}</span></span>
+                {openPos.take_profit_price > 0 && (
+                  <span className="text-muted text-xs">· TP1: <span className="text-accent font-mono">${Number(openPos.take_profit_price).toFixed(4)}</span></span>
+                )}
+              </div>
+              <span className="text-muted text-xs font-mono">Açık Pozisyon</span>
+            </div>
+            <PositionChart
+              coin={coin}
+              direction={openPos.direction}
+              entryPrice={Number(openPos.entry_price)}
+              slPrice={Number(openPos.stop_loss_price)}
+              tpPrice={Number(openPos.take_profit_price)}
+              tp2Price={openPos.take_profit2_price ? Number(openPos.take_profit2_price) : undefined}
+              height={480}
+            />
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-1 px-3 pt-2 pb-1 border-b border-border">
+              {TF_ORDER.map(tf => (
+                <button
+                  key={tf}
+                  onClick={() => setActiveTf(tf)}
+                  className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${
+                    activeTf === tf
+                      ? 'text-accent bg-accent/10 border border-accent/20'
+                      : 'text-muted hover:text-text'
+                  }`}
+                >
+                  {data.timeframes[tf]?.label ?? tf}
+                </button>
+              ))}
+            </div>
+            <TradingViewChart coin={coin} timeframe={TF_TIMEFRAME[activeTf] ?? '1h'} height={480} />
+          </>
+        )}
       </div>
 
       {/* Skor özeti + detaylı dağılım */}
@@ -406,6 +457,82 @@ export default function CoinDetail() {
           </div>
         </div>
       </div>
+
+      {/* Bot Karar Skoru */}
+      {data.bot_scores && (() => {
+        const bs = data.bot_scores!
+        const threshold = bs.threshold
+        const thresholdPct = Math.round(threshold * 100)
+        return (
+          <div className="card space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-text font-semibold text-sm">Bot Karar Skoru</div>
+              <span className="text-xs text-muted font-mono">Eşik: {thresholdPct}%</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* LONG */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-accent font-mono font-bold">LONG ▲</span>
+                  <span className={`font-mono font-bold ${bs.long_eligible ? 'text-accent' : 'text-muted'}`}>
+                    {Math.round(bs.long_combined * 100)}%
+                    {bs.long_eligible
+                      ? <span className="ml-1.5 text-xs text-accent">✓ GİRİŞ</span>
+                      : <span className="ml-1.5 text-xs text-muted">✗ Yetersiz</span>}
+                  </span>
+                </div>
+                <div style={{ position: 'relative', height: 8, background: '#1e1e1e', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${Math.min(100, Math.round(bs.long_combined * 100))}%`,
+                    height: '100%',
+                    background: bs.long_eligible ? '#00ff88' : '#555555',
+                    borderRadius: 4,
+                    transition: 'width 0.5s',
+                  }} />
+                  {/* threshold line */}
+                  <div style={{
+                    position: 'absolute', top: 0, bottom: 0, width: 2,
+                    background: '#ffaa00', left: `${thresholdPct}%`,
+                    opacity: 0.8,
+                  }} />
+                </div>
+                <div className="text-xs text-muted font-mono">Teknik: {Math.round(bs.long_tech * 100)}%</div>
+              </div>
+              {/* SHORT */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-danger font-mono font-bold">SHORT ▼</span>
+                  <span className={`font-mono font-bold ${bs.short_eligible ? 'text-danger' : 'text-muted'}`}>
+                    {Math.round(bs.short_combined * 100)}%
+                    {bs.short_eligible
+                      ? <span className="ml-1.5 text-xs text-danger">✓ GİRİŞ</span>
+                      : <span className="ml-1.5 text-xs text-muted">✗ Yetersiz</span>}
+                  </span>
+                </div>
+                <div style={{ position: 'relative', height: 8, background: '#1e1e1e', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${Math.min(100, Math.round(bs.short_combined * 100))}%`,
+                    height: '100%',
+                    background: bs.short_eligible ? '#ff3333' : '#555555',
+                    borderRadius: 4,
+                    transition: 'width 0.5s',
+                  }} />
+                  <div style={{
+                    position: 'absolute', top: 0, bottom: 0, width: 2,
+                    background: '#ffaa00', left: `${thresholdPct}%`,
+                    opacity: 0.8,
+                  }} />
+                </div>
+                <div className="text-xs text-muted font-mono">Teknik: {Math.round(bs.short_tech * 100)}%</div>
+              </div>
+            </div>
+            <div className="text-xs text-muted pt-1 border-t border-border">
+              Sarı çizgi = bot eşiği ({thresholdPct}%). Bu skora ulaşan yön pozisyon açabilir.
+              Ekranda görünen "Kombine Skor" yön bağımsız gösterim skorudur — bot skoru farklı olabilir.
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Zaman dilimi analizleri */}
       <div>

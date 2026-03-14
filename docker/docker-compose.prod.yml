@@ -1,0 +1,49 @@
+version: "3.9"
+
+# Production deploy — uses Coolify's Traefik (coolify-proxy) for SSL + routing
+# strastix.com → borsabot container port 8080
+
+services:
+  borsabot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: borsabot
+    volumes:
+      - /data/borsabot/borsabot.db:/app/borsabot.db
+      - /data/borsabot/.env:/app/.env:ro
+    expose:
+      - "8080"
+    restart: unless-stopped
+    networks:
+      - coolify
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      traefik.enable: "true"
+      traefik.http.middlewares.gzip.compress: "true"
+      traefik.http.middlewares.redirect-to-https.redirectscheme.scheme: "https"
+
+      # HTTP → HTTPS redirect
+      traefik.http.routers.borsabot-http.entryPoints: "http"
+      traefik.http.routers.borsabot-http.rule: "Host(`strastix.com`)"
+      traefik.http.routers.borsabot-http.middlewares: "redirect-to-https"
+      traefik.http.routers.borsabot-http.service: "borsabot"
+
+      # HTTPS
+      traefik.http.routers.borsabot-https.entryPoints: "https"
+      traefik.http.routers.borsabot-https.rule: "Host(`strastix.com`)"
+      traefik.http.routers.borsabot-https.tls: "true"
+      traefik.http.routers.borsabot-https.tls.certresolver: "letsencrypt"
+      traefik.http.routers.borsabot-https.middlewares: "gzip"
+      traefik.http.routers.borsabot-https.service: "borsabot"
+
+      traefik.http.services.borsabot.loadbalancer.server.port: "8080"
+
+networks:
+  coolify:
+    external: true

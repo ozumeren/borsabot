@@ -6,6 +6,7 @@ from config.constants import (
     TECHNICAL_WEIGHT, SENTIMENT_WEIGHT, MARKET_DATA_WEIGHT,
     CRYPTOPANIC_WEIGHT, FEAR_GREED_WEIGHT,
 )
+from web.score_utils import display_score as _display_score
 
 _cache: Dict = {"coins": [], "updated_at": None, "btc_regime": "neutral"}
 
@@ -47,6 +48,8 @@ async def run_overview_scanner(engine: Any) -> None:
                         getattr(signal, "score",
                         getattr(signal, "technical_score", 0)) or 0
                     )
+                    if score == 0.0:
+                        score = _display_score(iv)
                     direction = str(getattr(signal, "direction", "NONE"))
                     rsi = float(getattr(iv, "rsi", 50) or 50)
                     macd_hist = float(getattr(iv, "macd_hist", 0) or 0)

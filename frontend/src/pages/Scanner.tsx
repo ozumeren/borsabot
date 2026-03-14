@@ -65,8 +65,8 @@ export default function Scanner() {
   const { data, dataUpdatedAt } = useQuery<OverviewData>({
     queryKey: ['signals-overview'],
     queryFn: fetchSignalOverview,
-    refetchInterval: 30_000,
-    staleTime: 25_000,
+    refetchInterval: 60_000,   // WsSync overview cache'ini günceller
+    staleTime: 55_000,
   })
 
   const regime = data?.btc_regime ?? 'neutral'

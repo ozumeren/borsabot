@@ -11,6 +11,7 @@ import Settings from './pages/Settings'
 import Charts from './pages/Charts'
 import CoinDetail from './pages/CoinDetail'
 import StatusBar from './components/StatusBar'
+import WsSync from './components/WsSync'
 
 const NAV = [
   { to: '/', label: 'Panel', exact: true },
@@ -31,6 +32,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <WsSync />
       <div className="flex flex-col min-h-screen">
         {/* Top nav */}
         <nav className="border-b border-border bg-card px-4 flex items-center gap-1 h-12 shrink-0">

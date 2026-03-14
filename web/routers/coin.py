@@ -10,6 +10,7 @@ from config.constants import (
     TECHNICAL_WEIGHT, SENTIMENT_WEIGHT, MARKET_DATA_WEIGHT,
     CRYPTOPANIC_WEIGHT, FEAR_GREED_WEIGHT,
 )
+from web.score_utils import display_scores as _display_scores_util, display_score as _display_score_util
 
 router = APIRouter()
 _engine: Any = None
@@ -26,34 +27,12 @@ TIMEFRAMES = [
 ]
 
 
+def _display_scores(iv) -> tuple[float, float]:
+    return _display_scores_util(iv)
+
+
 def _display_score(iv) -> float:
-    """ADX filtresi olmadan ham teknik skor — sadece gösterim için."""
-    ls = ss = 0.0
-    # RSI
-    if iv.rsi < 25:    ls += 0.20
-    elif iv.rsi < 45:  ls += 0.10
-    if iv.rsi > 75:    ss += 0.20
-    elif iv.rsi > 55:  ss += 0.10
-    # MACD crossover
-    if iv.macd_hist_prev <= 0 and iv.macd_hist > 0:   ls += 0.20
-    elif iv.macd_hist > 0:                             ls += 0.08
-    if iv.macd_hist_prev >= 0 and iv.macd_hist < 0:   ss += 0.20
-    elif iv.macd_hist < 0:                             ss += 0.08
-    # EMA çapraz
-    if iv.ema_short > iv.ema_long:   ls += 0.15
-    else:                            ss += 0.15
-    # Bollinger
-    if iv.bb_pct < 0.20:    ls += 0.15
-    elif iv.bb_pct > 0.80:  ss += 0.15
-    # SMA200
-    if iv.close > iv.sma_long:   ls += 0.08
-    else:                        ss += 0.08
-    # Hacim
-    if iv.is_volume_spike:   ls += 0.05; ss += 0.05  # noqa: E702
-    # Price Action
-    ls += iv.pa_bull_score * 0.20
-    ss += iv.pa_bear_score * 0.20
-    return round(min(1.0, max(ls, ss)), 3)
+    return _display_score_util(iv)
 
 
 async def _analyze_tf(coin: str, okx_tf: str, limit: int) -> Optional[dict]:
@@ -122,16 +101,48 @@ async def _build(coin: str) -> dict:
     direction       = timeframes.get("1h", {}).get("direction", "NONE")
     last_price      = float(_engine.state.last_prices.get(coin, 0.0))
 
-    # 1h verisi zaten _analyze_tf'de çekildi; yeniden çekme maliyetini önlemek için
-    # 1h sonucunu doğrudan kullan
     tf1h = timeframes.get("1h", {})
     if "error" not in tf1h:
         technical_score = float(tf1h.get("score", 0.0))
         last_price = last_price or float(tf1h.get("close", 0.0))
 
-    # Yön bağımsız kombine skor (NONE yönlü coinlerde de farklı değer gösterir)
     fg_raw    = fg_index / 100.0
-    fg_norm   = max(fg_raw, 1.0 - fg_raw)   # 0.5=nötr, 1.0=ekstrem
+
+    # ── Gerçek bot LONG/SHORT kombine skorları ────────────────────────────────
+    # Bot tam formülü: yöne bağlı sentiment + market, confluence bonusu yok
+    def _bot_combined(tech_score: float, is_long: bool) -> float:
+        def norm(raw: float) -> float:
+            v = (raw + 1.0) / 2.0
+            return v if is_long else (1.0 - v)
+        fg_s = (1.0 - fg_raw) if is_long else fg_raw
+        sentiment = 0.5 * CRYPTOPANIC_WEIGHT + fg_s * FEAR_GREED_WEIGHT
+        market_n  = norm(market_signal)
+        return round(
+            tech_score  * TECHNICAL_WEIGHT +
+            sentiment   * SENTIMENT_WEIGHT +
+            market_n    * MARKET_DATA_WEIGHT,
+            3,
+        )
+
+    # 1h teknik long/short skorlarını (ADX bypass) al
+    long_tech_score  = float(tf1h.get("pa_bull_score", 0.0))  # placeholder
+    short_tech_score = float(tf1h.get("pa_bear_score", 0.0))  # placeholder
+    try:
+        _df = await asyncio.to_thread(
+            _engine.market_data.fetch_ohlcv, f"{coin}-USDT-SWAP", "1h", limit=200
+        )
+        if _df is not None and not _df.empty and len(_df) >= 20:
+            _iv = await asyncio.to_thread(_engine.tech_analyzer.compute, _df)
+            long_tech_score, short_tech_score = _display_scores(_iv)
+    except Exception:
+        long_tech_score = short_tech_score = technical_score
+
+    long_combined_score  = _bot_combined(long_tech_score,  is_long=True)
+    short_combined_score = _bot_combined(short_tech_score, is_long=False)
+    min_combined_score   = getattr(_engine.sig_combiner, "min_combined_score", 0.55)
+
+    # Gösterim için yön bağımsız skor (mevcut uyumluluk)
+    fg_norm   = max(fg_raw, 1.0 - fg_raw)
     sentiment_score = round(0.5 * CRYPTOPANIC_WEIGHT + fg_norm * FEAR_GREED_WEIGHT, 4)
     market_score    = round(min(1.0, abs(market_signal)) * 0.5 + 0.5, 4)
     combined_score  = round(
@@ -173,6 +184,15 @@ async def _build(coin: str) -> dict:
             },
             "fear_greed_index": fg_index,
             "funding_rate":     funding_rate,
+        },
+        "bot_scores": {
+            "long_combined":  long_combined_score,
+            "short_combined": short_combined_score,
+            "long_tech":      long_tech_score,
+            "short_tech":     short_tech_score,
+            "threshold":      min_combined_score,
+            "long_eligible":  long_combined_score  >= min_combined_score,
+            "short_eligible": short_combined_score >= min_combined_score,
         },
         "timeframes": timeframes,
         "reasons": list(timeframes.get("1h", {}).get("reasons", [])),
