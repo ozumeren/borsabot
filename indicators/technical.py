@@ -24,6 +24,7 @@ class IndicatorValues:
     bb_mid: float
     bb_lower: float
     bb_pct: float       # 0.0 = alt band, 1.0 = üst band
+    bb_width_pct: float # (bb_upper - bb_lower) / close — bant genişliği oranı
     atr: float
     adx: float
     close: float
@@ -81,7 +82,8 @@ class TechnicalAnalyzer:
         bb_mid   = bb.bollinger_mavg().iloc[-1]
         price    = close.iloc[-1]
         band_width = bb_upper - bb_lower
-        bb_pct   = (price - bb_lower) / band_width if band_width > 0 else 0.5
+        bb_pct       = (price - bb_lower) / band_width if band_width > 0 else 0.5
+        bb_width_pct = band_width / float(price) if float(price) > 0 else 0.0
 
         # ATR
         atr = ta.volatility.AverageTrueRange(high, low, close, window=ATR_PERIOD).average_true_range().iloc[-1]
@@ -117,6 +119,7 @@ class TechnicalAnalyzer:
             bb_mid=float(bb_mid),
             bb_lower=float(bb_lower),
             bb_pct=float(bb_pct),
+            bb_width_pct=float(bb_width_pct),
             atr=float(atr),
             adx=float(adx) if not pd.isna(adx) else 0.0,
             close=float(price),

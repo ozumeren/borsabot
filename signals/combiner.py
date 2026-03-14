@@ -17,8 +17,10 @@ class FinalSignal:
     coin: str
     entry_price: float
     reasons: list[str] = field(default_factory=list)
-    atr: float = 0.0       # volatilite bazlı pozisyon boyutu + trailing stop için
-    leverage: int = 5      # dinamik kaldıraç (calculate_leverage tarafından doldurulur)
+    atr: float = 0.0          # volatilite bazlı pozisyon boyutu + trailing stop için
+    leverage: int = 5         # dinamik kaldıraç (calculate_leverage tarafından doldurulur)
+    adx: float = 0.0          # trend gücü — stop çarpanını etkiler
+    bb_width_pct: float = 0.0 # BB bant genişliği / fiyat — squeeze tespiti için
 
     @property
     def is_actionable(self) -> bool:

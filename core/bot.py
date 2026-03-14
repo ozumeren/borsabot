@@ -636,6 +636,8 @@ class BotEngine:
             atr=iv.atr,
             leverage=self.settings.leverage,  # varsayılan; aşağıda gerçek değerle güncellenir
         )
+        final_signal.adx = iv.adx
+        final_signal.bb_width_pct = iv.bb_width_pct
 
         # Gerçek combined_score ile kaldıracı hesapla ve güncelle
         if final_signal.is_actionable:
@@ -729,6 +731,8 @@ class BotEngine:
                         coin=coin, entry_price=entry_price, atr=iv.atr,
                         leverage=dyn_leverage,
                     )
+                    final_signal.adx = iv.adx
+                    final_signal.bb_width_pct = iv.bb_width_pct
                     # combined_score var ama direction NONE olabilir → teknik yönü koru
                     if final_signal.direction == Direction.NONE and final_signal.combined_score >= 0.42:
                         final_signal = FinalSignal(
@@ -742,6 +746,8 @@ class BotEngine:
                             reasons=final_signal.reasons or tech_signal.reasons,
                             atr=iv.atr,
                             leverage=dyn_leverage,
+                            adx=iv.adx,
+                            bb_width_pct=iv.bb_width_pct,
                         )
                     if final_signal.combined_score >= 0.42:
                         results.append((final_signal, iv, mtf_ok))

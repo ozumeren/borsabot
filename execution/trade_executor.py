@@ -64,7 +64,8 @@ class TradeExecutor:
         direction = "long" if signal.direction == Direction.LONG else "short"
 
         sl_price = self.stop_calc.calculate_stop_loss(
-            signal.direction, signal.entry_price, atr=None
+            signal.direction, signal.entry_price,
+            atr=signal.atr, adx=signal.adx, bb_width_pct=signal.bb_width_pct,
         )
         tp_price = self.stop_calc.calculate_take_profit(
             signal.direction, signal.entry_price, sl_price
