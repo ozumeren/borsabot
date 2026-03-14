@@ -80,7 +80,7 @@ async def _build(coin: str) -> dict:
     fg_index    = getattr(_engine.state, "fear_greed_index", 50) or 50
     funding_snap = _engine.state.funding_cache.get(coin)
     market_signal = funding_snap.combined_market_signal if funding_snap else 0.0
-    funding_rate  = round(float(funding_snap.weighted_rate), 6) if funding_snap else None
+    funding_rate  = round(float(funding_snap.avg_rate), 6) if funding_snap else None
 
     combined_score  = 0.0
     technical_score = float(timeframes.get("1h", {}).get("score", 0.0))
