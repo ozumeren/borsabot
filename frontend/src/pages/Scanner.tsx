@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { fetchSignalOverview, fetchFullScan } from '../lib/api'
 
 interface CoinRow {
@@ -56,6 +57,7 @@ function scoreBar(score: number) {
 }
 
 export default function Scanner() {
+  const navigate = useNavigate()
   const [fullScanData, setFullScanData] = useState<CoinRow[] | null>(null)
   const [scanning, setScanning] = useState(false)
   const [showFull, setShowFull] = useState(false)
@@ -179,7 +181,12 @@ export default function Scanner() {
                   <tr key={coin.coin} className={`border-b border-border/50 hover:bg-white/3 transition-colors ${rowBg}`}>
                     <td className="py-2.5 px-4 text-muted text-xs font-mono">{i + 1}</td>
                     <td className="py-2.5 px-4">
-                      <span className="text-text font-bold font-mono">{coin.coin}</span>
+                      <button
+                        className="text-text font-bold font-mono hover:text-accent transition-colors"
+                        onClick={() => navigate(`/coin/${coin.coin}`)}
+                      >
+                        {coin.coin}
+                      </button>
                     </td>
                     <td className="py-2.5 px-4 text-right font-mono text-xs text-text">
                       ${coin.price < 1
