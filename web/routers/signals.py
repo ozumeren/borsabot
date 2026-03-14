@@ -2,6 +2,10 @@ import asyncio
 from typing import Any
 from fastapi import APIRouter, HTTPException
 from web.overview_scanner import get_cache
+from config.constants import (
+    TECHNICAL_WEIGHT, SENTIMENT_WEIGHT, MARKET_DATA_WEIGHT,
+    CRYPTOPANIC_WEIGHT, FEAR_GREED_WEIGHT,
+)
 
 router = APIRouter()
 _engine: Any = None
@@ -76,20 +80,20 @@ async def full_scan():
                 rsi = float(getattr(iv, "rsi", 50) or 50)
                 macd_hist = float(getattr(iv, "macd_hist", 0) or 0)
 
-                # Kombine skor: teknik + Fear&Greed + funding rate
+                # Kombine skor: yön bağımsız formül
                 fg_index = getattr(_engine.state, "fear_greed_index", 50) or 50
                 funding_snap = _engine.state.funding_cache.get(coin)
                 market_signal = funding_snap.combined_market_signal if funding_snap else 0.0
-                final = _engine.sig_combiner.combine(
-                    technical=signal,
-                    cryptopanic_score=0.0,
-                    fear_greed_index=fg_index,
-                    market_signal=market_signal,
-                    coin=coin,
-                    entry_price=last_price,
-                    atr=iv.atr,
+                fg_raw  = fg_index / 100.0
+                fg_norm = max(fg_raw, 1.0 - fg_raw)
+                sentiment = 0.5 * CRYPTOPANIC_WEIGHT + fg_norm * FEAR_GREED_WEIGHT
+                market_n  = min(1.0, abs(market_signal)) * 0.5 + 0.5
+                combined_score = round(
+                    score     * TECHNICAL_WEIGHT +
+                    sentiment * SENTIMENT_WEIGHT +
+                    market_n  * MARKET_DATA_WEIGHT,
+                    3,
                 )
-                combined_score = float(final.combined_score or score)
 
                 if combined_score >= 0.58:
                     status = "entry"

@@ -6,6 +6,10 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
+from config.constants import (
+    TECHNICAL_WEIGHT, SENTIMENT_WEIGHT, MARKET_DATA_WEIGHT,
+    CRYPTOPANIC_WEIGHT, FEAR_GREED_WEIGHT,
+)
 
 router = APIRouter()
 _engine: Any = None
@@ -79,38 +83,30 @@ async def _build(coin: str) -> dict:
     funding_rate  = round(float(funding_snap.weighted_rate), 6) if funding_snap else None
 
     combined_score  = 0.0
-    technical_score = 0.0
+    technical_score = float(timeframes.get("1h", {}).get("score", 0.0))
     sentiment_score = 0.0
     market_score    = 0.0
     direction       = timeframes.get("1h", {}).get("direction", "NONE")
     last_price      = float(_engine.state.last_prices.get(coin, 0.0))
 
-    try:
-        df = await asyncio.to_thread(
-            _engine.market_data.fetch_ohlcv, f"{coin}-USDT-SWAP", "1h", limit=200
-        )
-        if df is not None and not df.empty:
-            iv  = await asyncio.to_thread(_engine.tech_analyzer.compute, df)
-            sig = _engine.tech_sig_gen.generate(iv)
-            final = _engine.sig_combiner.combine(
-                technical=sig,
-                cryptopanic_score=0.0,
-                fear_greed_index=fg_index,
-                market_signal=market_signal,
-                coin=coin,
-                entry_price=float(iv.close),
-                atr=float(iv.atr),
-            )
-            combined_score  = round(float(final.combined_score), 3)
-            technical_score = round(float(final.technical_score), 3)
-            sentiment_score = round(float(final.sentiment_score), 3)
-            market_score    = round(float(final.market_score), 3)
-            direction       = str(final.direction)
-            if not last_price:
-                last_price = float(iv.close)
-    except Exception:
-        technical_score = float(timeframes.get("1h", {}).get("score", 0.0))
-        combined_score  = technical_score
+    # 1h verisi zaten _analyze_tf'de çekildi; yeniden çekme maliyetini önlemek için
+    # 1h sonucunu doğrudan kullan
+    tf1h = timeframes.get("1h", {})
+    if "error" not in tf1h:
+        technical_score = float(tf1h.get("score", 0.0))
+        last_price = last_price or float(tf1h.get("close", 0.0))
+
+    # Yön bağımsız kombine skor (NONE yönlü coinlerde de farklı değer gösterir)
+    fg_raw    = fg_index / 100.0
+    fg_norm   = max(fg_raw, 1.0 - fg_raw)   # 0.5=nötr, 1.0=ekstrem
+    sentiment_score = round(0.5 * CRYPTOPANIC_WEIGHT + fg_norm * FEAR_GREED_WEIGHT, 4)
+    market_score    = round(min(1.0, abs(market_signal)) * 0.5 + 0.5, 4)
+    combined_score  = round(
+        technical_score * TECHNICAL_WEIGHT +
+        sentiment_score * SENTIMENT_WEIGHT +
+        market_score    * MARKET_DATA_WEIGHT,
+        3,
+    )
 
     now = datetime.now(timezone.utc)
     return {
