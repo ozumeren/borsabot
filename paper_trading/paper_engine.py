@@ -9,14 +9,14 @@ from signals.combiner import FinalSignal
 from signals.technical_signal import Direction
 from risk.position_sizer import PositionSizer
 from risk.stop_loss import StopLossCalculator
-from config.constants import TP2_RISK_REWARD
+from config.constants import TP2_RISK_REWARD, OKX_TAKER_FEE_PCT
 from risk.circuit_breaker import CircuitBreaker
 from utils.logger import get_logger
 from utils.helpers import format_usdt, format_pct, pct_change
 
 logger = get_logger("paper_trading")
 
-OKX_FEE_PCT = 0.001  # %0.10 taker fee (regular kullanıcı, market emir)
+OKX_FEE_PCT = OKX_TAKER_FEE_PCT  # constants.py'den — tek kaynak
 
 
 @dataclass

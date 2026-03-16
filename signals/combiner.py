@@ -69,9 +69,10 @@ class SignalCombiner:
         # ── Sentiment ─────────────────────────────────────────────────────────
         cp_norm = norm(cryptopanic_score)
         fg_raw  = fear_greed_index / 100.0
-        # Contrarian yalnızca aşırı değerlerde (>85 Extreme Greed, <15 Extreme Fear)
+        # Contrarian yalnızca aşırı değerlerde — F&G API tanımına göre:
+        # Extreme Greed: ≥75 | Extreme Fear: ≤25
         # Normal aralıkta momentum-uyumlu: yüksek F&G = bullish teyit
-        if fear_greed_index >= 85 or fear_greed_index <= 15:
+        if fear_greed_index >= 75 or fear_greed_index <= 25:
             fg_norm = (1.0 - fg_raw) if is_long else fg_raw
         else:
             fg_norm = fg_raw if is_long else (1.0 - fg_raw)

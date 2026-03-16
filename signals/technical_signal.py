@@ -54,21 +54,21 @@ class TechnicalSignalGenerator:
         short_count = 0
 
         # ── RSI (0.20) — trend-uyumlu ─────────────────────────────────────────
-        # RSI ≥ 65 = güçlü bullish momentum (tam puan)
+        # RSI ≥ RSI_OVERBOUGHT (65) = güçlü bullish momentum (tam puan)
         # RSI 50-65 = bullish bölge (kısmi puan)
-        # RSI ≤ 35 = güçlü bearish momentum (tam puan)
+        # RSI ≤ RSI_OVERSOLD (35) = güçlü bearish momentum (tam puan)
         # RSI 35-50 = bearish bölge (kısmi puan)
         rsi_long = rsi_short = False
-        if iv.rsi >= 65:
+        if iv.rsi >= RSI_OVERBOUGHT:
             long_score += 0.20; long_count += 1; rsi_long = True
             long_reasons.append(f"RSI güçlü momentum: {iv.rsi:.1f}")
         elif iv.rsi >= 50:
             long_score += 0.10
             long_reasons.append(f"RSI bullish bölge: {iv.rsi:.1f}")
-        elif iv.rsi <= 35:
+        elif iv.rsi <= RSI_OVERSOLD:
             short_score += 0.20; short_count += 1; rsi_short = True
             short_reasons.append(f"RSI güçlü düşüş: {iv.rsi:.1f}")
-        else:  # 35 < rsi < 50
+        else:  # RSI_OVERSOLD < rsi < 50
             short_score += 0.10
             short_reasons.append(f"RSI bearish bölge: {iv.rsi:.1f}")
 

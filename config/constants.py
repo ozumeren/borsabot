@@ -1,7 +1,7 @@
 # ── Teknik Analiz Parametreleri ──────────────────────────────────────────────
 RSI_PERIOD = 14
-RSI_OVERBOUGHT = 75   # 70'den 75'e: daha seçici, false signal azalır
-RSI_OVERSOLD = 25     # 30'dan 25'e: gerçek aşırı satım bölgesi
+RSI_OVERBOUGHT = 65   # trend-uyumlu: ≥65 güçlü bullish momentum
+RSI_OVERSOLD   = 35   # trend-uyumlu: ≤35 güçlü bearish momentum
 
 MACD_FAST = 12
 MACD_SLOW = 26
@@ -71,3 +71,6 @@ FUNDING_FETCH_INTERVAL = 300   # 5 dakika (funding her 8 saatte sıfırlanır)
 DEFAULT_RISK_REWARD = 2.0    # TP1: stop mesafesi × 2  (%50 pozisyon)
 TP2_RISK_REWARD     = 3.5    # TP2: stop mesafesi × 3.5 (kalan %50)
 MIN_STOP_DISTANCE_PCT = 0.005  # minimum %0.5 stop
+
+# ── İşlem Ücretleri ───────────────────────────────────────────────────────────
+OKX_TAKER_FEE_PCT = 0.001    # %0.10 taker fee (piyasa emri)

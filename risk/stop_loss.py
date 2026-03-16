@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 from signals.technical_signal import Direction
-from config.constants import DEFAULT_RISK_REWARD, MIN_STOP_DISTANCE_PCT
+from config.constants import DEFAULT_RISK_REWARD
 
 
 class StopLossCalculator:

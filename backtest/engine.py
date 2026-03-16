@@ -15,9 +15,10 @@ from signals.technical_signal import TechnicalSignalGenerator, Direction
 from config.constants import (
     RSI_PERIOD, MACD_FAST, MACD_SLOW, MACD_SIGNAL_PERIOD,
     EMA_SHORT, EMA_LONG, SMA_LONG, BB_PERIOD, BB_STD, ATR_PERIOD, ADX_PERIOD,
+    OKX_TAKER_FEE_PCT,
 )
 
-FEE_PCT = 0.001  # %0.1 taker fee (her iki taraf)
+FEE_PCT = OKX_TAKER_FEE_PCT  # constants.py'den — tek kaynak
 
 
 @dataclass

@@ -506,12 +506,14 @@ class BotEngine:
                 for coin, record in self.state.open_positions.items():
                     symbol = f"{coin}/USDT:USDT"
                     current = self.market_data.get_current_price(symbol) or record.entry_price
+                    from config.constants import OKX_TAKER_FEE_PCT
+                    fee = record.quantity * (record.entry_price + current) * OKX_TAKER_FEE_PCT
                     if record.direction == "long":
-                        pnl = (current - record.entry_price) * record.quantity
+                        pnl = (current - record.entry_price) * record.quantity - fee
                         sl_dist = (current - record.stop_loss_price) / current * 100
                         tp_dist = ((record.take_profit_price or current) - current) / current * 100
                     else:
-                        pnl = (record.entry_price - current) * record.quantity
+                        pnl = (record.entry_price - current) * record.quantity - fee
                         sl_dist = (record.stop_loss_price - current) / current * 100
                         tp_dist = (current - (record.take_profit_price or current)) / current * 100
 

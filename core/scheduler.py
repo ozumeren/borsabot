@@ -70,10 +70,12 @@ class BotScheduler:
             misfire_grace_time=60,
         )
 
-        # Çoklu borsa funding verisi — 5 dakika
+        # Çoklu borsa funding verisi — 5 dakika (news'den 90s sonra başlar, API çakışmasın)
+        import datetime as _dt2
+        _funding_start = _dt2.datetime.now(_dt2.timezone.utc) + _dt2.timedelta(seconds=90)
         self.scheduler.add_job(
             bot.fetch_funding_data,
-            IntervalTrigger(seconds=FUNDING_FETCH_INTERVAL),
+            IntervalTrigger(seconds=FUNDING_FETCH_INTERVAL, start_date=_funding_start),
             id="funding_fetcher",
             max_instances=1,
             misfire_grace_time=60,
