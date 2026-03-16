@@ -192,6 +192,10 @@ class TechnicalSignalGenerator:
             short_score += 0.05
             short_reasons.append("PA yapı: düşen trend (LH+LL)")
 
+        # ── Skor sınırlama: 1.0'ı aşan katkılar (PA, ADX bonus vb.) düzeltilsin ──
+        long_score  = min(long_score,  1.0)
+        short_score = min(short_score, 1.0)
+
         # ── Karar ────────────────────────────────────────────────────────────
         if long_score >= 0.50 and short_score >= 0.50:
             return TechnicalSignal(Direction.NONE, max(long_score, short_score),

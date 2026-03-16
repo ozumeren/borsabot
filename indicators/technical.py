@@ -82,7 +82,8 @@ class TechnicalAnalyzer:
         bb_mid   = bb.bollinger_mavg().iloc[-1]
         price    = close.iloc[-1]
         band_width = bb_upper - bb_lower
-        bb_pct       = (price - bb_lower) / band_width if band_width > 0 else 0.5
+        raw_bb_pct   = (price - bb_lower) / band_width if band_width > 0 else 0.5
+        bb_pct       = max(0.0, min(1.0, raw_bb_pct))  # breakout durumunda [0,1] dışına çıkmasın
         bb_width_pct = band_width / float(price) if float(price) > 0 else 0.0
 
         # ATR
