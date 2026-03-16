@@ -53,21 +53,24 @@ class TechnicalSignalGenerator:
         long_count  = 0   # tam sinyal veren indikatör sayısı
         short_count = 0
 
-        # ── RSI (0.20) ────────────────────────────────────────────────────────
+        # ── RSI (0.20) — trend-uyumlu ─────────────────────────────────────────
+        # RSI ≥ 65 = güçlü bullish momentum (tam puan)
+        # RSI 50-65 = bullish bölge (kısmi puan)
+        # RSI ≤ 35 = güçlü bearish momentum (tam puan)
+        # RSI 35-50 = bearish bölge (kısmi puan)
         rsi_long = rsi_short = False
-        if iv.rsi < RSI_OVERSOLD:
+        if iv.rsi >= 65:
             long_score += 0.20; long_count += 1; rsi_long = True
-            long_reasons.append(f"RSI aşırı satım: {iv.rsi:.1f}")
-        elif iv.rsi < 45:
+            long_reasons.append(f"RSI güçlü momentum: {iv.rsi:.1f}")
+        elif iv.rsi >= 50:
             long_score += 0.10
-            long_reasons.append(f"RSI zayıf: {iv.rsi:.1f}")
-
-        if iv.rsi > RSI_OVERBOUGHT:
+            long_reasons.append(f"RSI bullish bölge: {iv.rsi:.1f}")
+        elif iv.rsi <= 35:
             short_score += 0.20; short_count += 1; rsi_short = True
-            short_reasons.append(f"RSI aşırı alım: {iv.rsi:.1f}")
-        elif iv.rsi > 55:
+            short_reasons.append(f"RSI güçlü düşüş: {iv.rsi:.1f}")
+        else:  # 35 < rsi < 50
             short_score += 0.10
-            short_reasons.append(f"RSI yüksek: {iv.rsi:.1f}")
+            short_reasons.append(f"RSI bearish bölge: {iv.rsi:.1f}")
 
         # ── MACD histogram crossover (0.20) ───────────────────────────────────
         # Gerçek crossover: önceki mum negatif, şimdiki pozitif (veya tersi)
@@ -102,14 +105,22 @@ class TechnicalSignalGenerator:
                 short_score += 0.08
                 short_reasons.append(f"EMA{EMA_SHORT}<{EMA_LONG} (zayıf spread: {ema_spread:.2%})")
 
-        # ── Bollinger Bands (0.20) ────────────────────────────────────────────
+        # ── Bollinger Bands (0.20) — trend-uyumlu ────────────────────────────
+        # Üst yarı (≥0.60) = bullish; üst bölge (≥0.80) = tam puan
+        # Alt yarı (≤0.40) = bearish; alt bölge (≤0.20) = tam puan
         bb_long = bb_short = False
-        if iv.bb_pct < 0.05:
+        if iv.bb_pct >= 0.80:
             long_score += 0.20; long_count += 1; bb_long = True
-            long_reasons.append(f"Fiyat BB alt bandında (bb_pct={iv.bb_pct:.2f})")
-        if iv.bb_pct > 0.95:
+            long_reasons.append(f"Fiyat BB üst bölgesinde (bb_pct={iv.bb_pct:.2f})")
+        elif iv.bb_pct >= 0.60:
+            long_score += 0.10; bb_long = True
+            long_reasons.append(f"Fiyat BB üst yarısında (bb_pct={iv.bb_pct:.2f})")
+        elif iv.bb_pct <= 0.20:
             short_score += 0.20; short_count += 1; bb_short = True
-            short_reasons.append(f"Fiyat BB üst bandında (bb_pct={iv.bb_pct:.2f})")
+            short_reasons.append(f"Fiyat BB alt bölgesinde (bb_pct={iv.bb_pct:.2f})")
+        elif iv.bb_pct <= 0.40:
+            short_score += 0.10; bb_short = True
+            short_reasons.append(f"Fiyat BB alt yarısında (bb_pct={iv.bb_pct:.2f})")
 
         # ── SMA200 makro filtre (0.10) ────────────────────────────────────────
         if iv.close > iv.sma_long:
@@ -119,12 +130,15 @@ class TechnicalSignalGenerator:
             short_score += 0.10
             short_reasons.append("SMA200 altında (bearish makro)")
 
-        # ── Hacim spike (0.10) ────────────────────────────────────────────────
+        # ── Hacim spike (0.08) — yönlü ───────────────────────────────────────
+        # Fiyat EMA üstündeyse = bullish momentum hacmi, altındaysa = bearish
         if iv.is_volume_spike:
-            long_score  += 0.05
-            short_score += 0.05
-            long_reasons.append("Hacim spike")
-            short_reasons.append("Hacim spike")
+            if iv.close >= iv.ema_short:
+                long_score  += 0.08
+                long_reasons.append("Yükselen hacim (bullish momentum)")
+            else:
+                short_score += 0.08
+                short_reasons.append("Yükselen hacim (bearish momentum)")
 
         # ── OBV teyidi / ıraksaması ────────────────────────────────────────────
         # OBV yön teyidi: +0.05 bonus; ıraksama (zıt yön): -0.05 ceza

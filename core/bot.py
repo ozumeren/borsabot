@@ -582,8 +582,11 @@ class BotEngine:
         if tech_signal.direction == Direction.NONE:
             return None
 
-        # ── MTF Filtresi: 1h + 4h + 1d EMA onayı ────────────────────────────
-        for tf, w_short, w_long in [("1h", 9, 21), ("4h", 9, 21)]:
+        # ── MTF Filtresi: 1h + 4h soft ceza ──────────────────────────────────
+        # Hard-block yerine skor cezası: zıt yön = combined_score'dan düşülür
+        # 1h zıt: -0.08 | 4h zıt: -0.12 | 1D EMA50 zıt: -0.15
+        mtf_penalty = 0.0
+        for tf, w_short, w_long, penalty in [("1h", 9, 21, 0.08), ("4h", 9, 21, 0.12)]:
             try:
                 df_tf = self.market_data.fetch_ohlcv(symbol, tf)
                 if df_tf is not None and len(df_tf) >= w_long:
@@ -591,15 +594,15 @@ class BotEngine:
                     ema_s = ta.trend.EMAIndicator(df_tf["close"], window=w_short).ema_indicator().iloc[-1]
                     ema_l = ta.trend.EMAIndicator(df_tf["close"], window=w_long).ema_indicator().iloc[-1]
                     if tech_signal.direction == Direction.LONG and ema_s < ema_l:
-                        logger.debug(f"MTF {tf} filtre: LONG iptal (bear)", coin=coin)
-                        return None
-                    if tech_signal.direction == Direction.SHORT and ema_s > ema_l:
-                        logger.debug(f"MTF {tf} filtre: SHORT iptal (bull)", coin=coin)
-                        return None
+                        mtf_penalty += penalty
+                        logger.debug(f"MTF {tf}: LONG için -{penalty} ceza", coin=coin)
+                    elif tech_signal.direction == Direction.SHORT and ema_s > ema_l:
+                        mtf_penalty += penalty
+                        logger.debug(f"MTF {tf}: SHORT için -{penalty} ceza", coin=coin)
             except Exception as e:
                 logger.debug(f"MTF {tf} fetch hatası", coin=coin, error=str(e))
 
-        # ── 1D Trend Filtresi: EMA50 makro yön ───────────────────────────────
+        # ── 1D Trend Filtresi: EMA50 makro yön (soft ceza) ───────────────────
         try:
             df_1d = self.market_data.fetch_ohlcv(symbol, "1d", limit=60)
             if df_1d is not None and len(df_1d) >= 50:
@@ -607,11 +610,11 @@ class BotEngine:
                 ema50_1d = ta.trend.EMAIndicator(df_1d["close"], window=50).ema_indicator().iloc[-1]
                 price_1d = df_1d["close"].iloc[-1]
                 if tech_signal.direction == Direction.LONG and price_1d < ema50_1d:
-                    logger.debug("1D filtre: LONG iptal (EMA50 altında)", coin=coin)
-                    return None
-                if tech_signal.direction == Direction.SHORT and price_1d > ema50_1d:
-                    logger.debug("1D filtre: SHORT iptal (EMA50 üstünde)", coin=coin)
-                    return None
+                    mtf_penalty += 0.15
+                    logger.debug("1D EMA50 altında: LONG için -0.15 ceza", coin=coin)
+                elif tech_signal.direction == Direction.SHORT and price_1d > ema50_1d:
+                    mtf_penalty += 0.15
+                    logger.debug("1D EMA50 üstünde: SHORT için -0.15 ceza", coin=coin)
         except Exception as e:
             logger.debug("1D fetch hatası", coin=coin, error=str(e))
 
@@ -650,6 +653,16 @@ class BotEngine:
         )
         final_signal.adx = iv.adx
         final_signal.bb_width_pct = iv.bb_width_pct
+
+        # ── MTF cezasını uygula ───────────────────────────────────────────────
+        if mtf_penalty > 0 and final_signal.is_actionable:
+            final_signal.combined_score = max(0.0, round(final_signal.combined_score - mtf_penalty, 4))
+            if final_signal.combined_score < self.sig_combiner.min_combined_score:
+                logger.debug(
+                    "MTF cezası sonrası skor yetersiz — sinyal iptal",
+                    coin=coin, penalty=mtf_penalty, score=final_signal.combined_score,
+                )
+                final_signal.direction = Direction.NONE
 
         # Gerçek combined_score ile kaldıracı hesapla ve güncelle
         if final_signal.is_actionable:

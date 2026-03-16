@@ -15,7 +15,7 @@ from data.funding_data import FundingSnapshot, ExchangeFundingRate
 def make_iv(**kwargs) -> IndicatorValues:
     """Test için varsayılan IndicatorValues."""
     defaults = dict(
-        rsi=50.0, macd_line=0.0, macd_signal=0.0, macd_hist=0.0,
+        rsi=50.0, macd_line=0.0, macd_signal=0.0, macd_hist=0.0, macd_hist_prev=0.0,
         ema_short=100.0, ema_long=100.0, sma_long=100.0,
         bb_upper=105.0, bb_mid=100.0, bb_lower=95.0, bb_pct=0.5,
         atr=1.5, adx=25.0, close=100.0, volume=1000.0, volume_avg20=700.0,
@@ -26,16 +26,18 @@ def make_iv(**kwargs) -> IndicatorValues:
 
 class TestTechnicalSignal:
     def test_strong_long_signal(self):
-        iv = make_iv(rsi=25.0, macd_hist=0.5, macd_line=0.5, macd_signal=0.1,
-                     ema_short=101.0, ema_long=99.0, bb_pct=0.02, close=101.0, sma_long=99.0)
+        # Trend-uyumlu: RSI güçlü bullish bölge, BB üst bölge, EMA yükselen, MACD crossover
+        iv = make_iv(rsi=70.0, macd_hist=0.5, macd_hist_prev=-0.1, macd_line=0.5, macd_signal=0.1,
+                     ema_short=101.0, ema_long=99.0, bb_pct=0.85, close=101.0, sma_long=99.0)
         gen = TechnicalSignalGenerator(min_score=0.6)
         sig = gen.generate(iv)
         assert sig.direction == Direction.LONG
         assert sig.score >= 0.6
 
     def test_strong_short_signal(self):
-        iv = make_iv(rsi=75.0, macd_hist=-0.5, macd_line=-0.5, macd_signal=-0.1,
-                     ema_short=99.0, ema_long=101.0, bb_pct=0.98, close=99.0, sma_long=101.0)
+        # Trend-uyumlu: RSI güçlü bearish bölge, BB alt bölge, EMA düşen, MACD crossover
+        iv = make_iv(rsi=30.0, macd_hist=-0.5, macd_hist_prev=0.1, macd_line=-0.5, macd_signal=-0.1,
+                     ema_short=99.0, ema_long=101.0, bb_pct=0.15, close=99.0, sma_long=101.0)
         gen = TechnicalSignalGenerator(min_score=0.6)
         sig = gen.generate(iv)
         assert sig.direction == Direction.SHORT
