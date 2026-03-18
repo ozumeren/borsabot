@@ -105,15 +105,13 @@ class SignalCombiner:
                 ["Sentiment teknik sinyalle çelişiyor"], atr=atr, leverage=leverage,
             )
 
-        # ── Dinamik minimum skor ──────────────────────────────────────────────
+        # ── Dinamik minimum skor — yalnızca sıkılaştırma ─────────────────────
+        # Gevşetme kaldırıldı: yüksek win rate zayıf sinyale izin gerekçesi değil
         min_score = self.min_combined_score
         if self.trade_logger is not None:
             win_rate = self.trade_logger.get_recent_win_rate(last_n=20)
-            if win_rate is not None:
-                if win_rate < 0.40:
-                    min_score = 0.65   # düşük win rate → daha seçici
-                elif win_rate > 0.65:
-                    min_score = 0.52   # yüksek win rate → biraz gevşet
+            if win_rate is not None and win_rate < 0.40:
+                min_score = 0.65   # düşük win rate → daha seçici
 
         if combined >= min_score:
             reasons = technical.reasons + [
