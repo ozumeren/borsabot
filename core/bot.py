@@ -111,6 +111,25 @@ class BotEngine:
                 settings=settings,
             )
 
+    async def close_position(self, coin: str, reason: str = "CLOSED_MANUAL") -> bool:
+        """Web API / panel üzerinden tek pozisyon kapatma."""
+        import asyncio
+        coin = coin.upper()
+        if self.settings.paper_trading:
+            pos = self.engine.positions.get(coin)
+            if not pos:
+                return False
+            price = self.market_data.get_current_price(f"{coin}/USDT:USDT") or pos.entry_price
+            await asyncio.to_thread(self.engine._close_position, coin, pos, price, reason)
+            self.state.remove_position(coin)
+            self.notifier.send(f"✅ <b>{coin}</b> pozisyonu manuel kapatıldı (panel).")
+            return True
+        else:
+            if coin not in self.state.open_positions:
+                return False
+            ok = await asyncio.to_thread(self.engine.close_position, coin, reason)
+            return bool(ok)
+
     async def initialize(self) -> None:
         """Başlangıç kontrolü: API bağlantısı, bakiye senkronizasyonu."""
         logger.info("Bot başlatılıyor...")
